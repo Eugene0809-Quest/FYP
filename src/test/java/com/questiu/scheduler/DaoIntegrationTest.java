@@ -9,12 +9,12 @@ import com.questiu.scheduler.model.Shift;
 
 import java.util.List;
 
-/** Proves the JDBC DAO layer reads real rows out of the MySQL 'shift_scheduling' DB. */
+/** Proves the JDBC DAO layer reads real rows out of the MySQL 'smartshift' DB. */
 public class DaoIntegrationTest {
     public static void main(String[] args) throws Exception {
         List<Employee> employees = new EmployeeDao().findAllActive();
-        List<Shift> shifts = new ShiftDao().findByWeekPlan(1);
-        List<Availability> availability = new AvailabilityDao().findByWeekPlan(1);
+        List<Shift> shifts = new ShiftDao().findAll();
+        List<Availability> availability = new AvailabilityDao().findAll();
 
         System.out.println("=== DAO Integration Test (real MySQL data) ===");
         System.out.println("Employees loaded: " + employees.size());

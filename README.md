@@ -10,7 +10,7 @@ two things had to be handled differently:
 
 | Component | Status | How it was verified |
 |---|---|---|
-| MySQL schema (`sql/schema.sql`) | **Tested for real** | Ran against a live MySQL/MariaDB server. All 14 tables created successfully, n=5 seed data loaded (28 shifts, 33 availability rows). |
+| MySQL schema (`sql/smartshift_schema.sql`) | **Tested for real (previous version); realigned since** | The earlier `shift_scheduling` schema ran clean against a live MySQL/MariaDB server (14 tables, n=5 seed: 28 shifts, 33 availability rows). The schema has since been superseded by `smartshift_schema.sql` (16 tables — adds `objective_weight` and `baseline_schedule`) to match the report's ER design; the Java DAOs were updated to match. **Re-run `sql/smartshift_schema.sql` + `sql/seed_smartshift_n5.sql` and re-verify before presenting this as tested again** - the old numbers no longer apply to the new schema even though the seed data was ported 1:1 to keep them (5 employees, 28 shifts, 33 availability rows). |
 | CP-SAT constraint model logic | **Tested for real** | Prototyped in Python (OR-Tools, pip-installable) against the *same* MySQL data. Solved to OPTIMAL with **zero unfilled shifts** for the n=5 scenario. See `python_validation/solver_prototype.py`. |
 | `PayrollCalculator.java` | **Tested for real** | Compiled and run with plain `javac`/`java` (no external deps needed). Output matches your report's Table 3.1 example exactly (RM594.00 for 48h at RM12/h). See `src/test/java/.../PayrollCalculatorManualTest.java`. |
 | `EmployeeDao`, `ShiftDao`, `AvailabilityDao` | **Tested for real** | Compiled and run against the live MySQL database using the MariaDB JDBC driver. Correctly loaded all 5 employees, 28 shifts, 33 availability rows. See `src/test/java/.../DaoIntegrationTest.java`. |
@@ -25,11 +25,17 @@ the output shown.
 
 ### 1. Set up the database
 ```bash
-mysql -u root -p < sql/schema.sql
-mysql -u root -p < sql/seed_n5.sql
+mysql -u root -p < sql/smartshift_schema.sql
+mysql -u root -p < sql/seed_smartshift_n5.sql
 ```
-Edit `src/main/java/com/questiu/scheduler/dao/DatabaseConnection.java` if your MySQL
-root password isn't blank.
+`DatabaseConnection.java` now reads the DB password from the
+`SMARTSHIFT_DB_PASSWORD` environment variable instead of a hardcoded value
+(it was previously committed in plain text, which is unsafe in a public
+repo). Set it before running if your local MySQL root password isn't blank:
+```bash
+export SMARTSHIFT_DB_PASSWORD=your_password   # macOS/Linux
+set SMARTSHIFT_DB_PASSWORD=your_password       # Windows cmd
+```
 
 ### 2. Build with Maven (needs internet access to Maven Central)
 ```bash
@@ -64,6 +70,20 @@ This is what I used to validate the constraint model before porting it to Java -
 keep it as a reference / sanity-check if the Java version ever gives a
 surprising result.
 
+## Schema realignment note (this session)
+
+The database was realigned from the earlier `shift_scheduling` design to
+`smartshift` (see `sql/legacy/README.md` for what changed and why). Updated:
+`smartshift_schema.sql` (+`objective_weight`, +`baseline_schedule`),
+`seed_smartshift_n5.sql`, `DatabaseConnection.java`, `EmployeeDao.java`,
+`ShiftDao.java`, `AvailabilityDao.java`, `Shift.java` (model), `Main.java`,
+`MainApp.java`, and both test files.
+
+**Not yet updated:** `python_validation/solver_prototype.py` still connects
+to the old `shift_scheduling` database and queries `shift`/`availability`
+with `week_plan_id`. If you want to re-run the Python validation, it needs
+the same column/table renames applied to the Java DAOs.
+
 ## Known simplifications in this FYP1 build (to fix in FYP2)
 
 - The CP-SAT objective currently only minimises unfilled demand. The full
@@ -84,8 +104,9 @@ surprising result.
 ```
 sme-scheduler/
   pom.xml                          Maven build (OR-Tools, MySQL connector, JavaFX)
-  sql/schema.sql                   14-table DDL - tested, runs clean
-  sql/seed_n5.sql                  n=5 synthetic dataset - tested, loads clean
+  sql/smartshift_schema.sql        16-table DDL (current/canonical) - re-verify against a live DB
+  sql/seed_smartshift_n5.sql       n=5 synthetic dataset, ported to the new schema - re-verify
+  sql/legacy/                      superseded shift_scheduling schema + seed - kept for reference only
   python_validation/solver_prototype.py   Validated CP-SAT logic (reference)
   src/main/java/com/questiu/scheduler/
     model/                         Employee, Shift, Availability, RosterAssignment, PayrollRecord

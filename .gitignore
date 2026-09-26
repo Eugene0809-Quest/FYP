@@ -1,0 +1,16 @@
+# Build output
+target/
+*.class
+
+# Local run scripts that may contain credentials (e.g. SMARTSHIFT_DB_PASSWORD)
+*.bat
+run*.sh
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

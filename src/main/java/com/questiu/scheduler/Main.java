@@ -19,16 +19,15 @@ import java.util.stream.Collectors;
  * scheduling + payroll pipeline actually works end-to-end, not just on paper.
  *
  * Run with: mvn compile exec:java -Dexec.mainClass=com.questiu.scheduler.Main
- * (after `mysql -u root < sql/schema.sql` and `mysql -u root < sql/seed_n5.sql`)
+ * (after `mysql -u root < sql/smartshift_schema.sql` and
+ *  `mysql -u root < sql/seed_smartshift_n5.sql`)
  */
 public class Main {
     public static void main(String[] args) throws Exception {
-        int weekPlanId = 1;
-
-        System.out.println("=== Loading data from MySQL (week_plan_id=" + weekPlanId + ") ===");
+        System.out.println("=== Loading data from MySQL (smartshift) ===");
         List<Employee> employees = new EmployeeDao().findAllActive();
-        List<Shift> shifts = new ShiftDao().findByWeekPlan(weekPlanId);
-        List<Availability> availability = new AvailabilityDao().findByWeekPlan(weekPlanId);
+        List<Shift> shifts = new ShiftDao().findAll();
+        List<Availability> availability = new AvailabilityDao().findAll();
         System.out.printf("Loaded %d employees, %d shifts, %d availability rows%n%n",
                 employees.size(), shifts.size(), availability.size());
 

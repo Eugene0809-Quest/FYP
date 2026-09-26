@@ -5,21 +5,21 @@ import java.time.Duration;
 
 /**
  * A single shift slot to be filled (Section 3.4 - decision problem input).
+ * Backed by the smartshift schema's shift_definition table: a recurring
+ * weekly template, not scoped to any particular week/schedule run.
  * dayOfWeek: 1 = Monday ... 7 = Sunday
  */
 public class Shift {
     private final int shiftId;
-    private final int weekPlanId;
     private final int dayOfWeek;
     private final LocalTime startTime;
     private final LocalTime endTime;
     private final int requiredRoleId;
     private final int staffNeeded;
 
-    public Shift(int shiftId, int weekPlanId, int dayOfWeek, LocalTime startTime,
+    public Shift(int shiftId, int dayOfWeek, LocalTime startTime,
                  LocalTime endTime, int requiredRoleId, int staffNeeded) {
         this.shiftId = shiftId;
-        this.weekPlanId = weekPlanId;
         this.dayOfWeek = dayOfWeek;
         this.startTime = startTime;
         this.endTime = endTime;
@@ -28,7 +28,6 @@ public class Shift {
     }
 
     public int getShiftId() { return shiftId; }
-    public int getWeekPlanId() { return weekPlanId; }
     public int getDayOfWeek() { return dayOfWeek; }
     public LocalTime getStartTime() { return startTime; }
     public LocalTime getEndTime() { return endTime; }

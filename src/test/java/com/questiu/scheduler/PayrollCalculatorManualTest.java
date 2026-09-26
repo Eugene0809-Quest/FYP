@@ -1,6 +1,7 @@
 package com.questiu.scheduler;
 
 import com.questiu.scheduler.model.Employee;
+import com.questiu.scheduler.model.EmploymentType;
 import com.questiu.scheduler.model.PayrollRecord;
 import com.questiu.scheduler.model.RosterAssignment;
 import com.questiu.scheduler.model.Shift;
@@ -20,14 +21,15 @@ public class PayrollCalculatorManualTest {
     public static void main(String[] args) {
         // One employee, max 45h/week, rate RM12.00/hour
         Employee emp = new Employee(1, "TestEmployee", 1,
-                new BigDecimal("12.00"), new BigDecimal("45.00"), true);
+                new BigDecimal("12.00"), new BigDecimal("45.00"), true,
+                "1234567890", EmploymentType.FULL_TIME);
 
         // Build shifts that sum to 48 hours total (matches Table 3.1: Hours_e = 48)
         // 6 shifts of 8 hours each = 48 hours
         Map<Integer, Shift> shiftsById = new java.util.HashMap<>();
         List<RosterAssignment> assignments = new java.util.ArrayList<>();
         for (int day = 1; day <= 6; day++) {
-            Shift s = new Shift(day, 1, day, LocalTime.of(9, 0), LocalTime.of(17, 0), 1, 1);
+            Shift s = new Shift(day, day, LocalTime.of(9, 0), LocalTime.of(17, 0), 1, 1);
             shiftsById.put(day, s);
             assignments.add(new RosterAssignment(1, day));
         }
