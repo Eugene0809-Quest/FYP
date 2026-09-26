@@ -6,11 +6,13 @@ import com.questiu.scheduler.dao.RoleDao;
 import com.questiu.scheduler.dao.ShiftDao;
 import com.questiu.scheduler.model.*;
 import com.questiu.scheduler.payroll.PayrollCalculator;
+import com.questiu.scheduler.solver.ManualScheduleValidator;
 import com.questiu.scheduler.solver.SchedulingEngine;
 import javafx.application.Application;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
+import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
@@ -24,16 +26,23 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * Multi-tab prototype UI (Section 3.7). Split into "Roster & Payroll" (the
- * original generate/solve pipeline) and "Employees" (registration +
- * listing) - added per supervisor feedback requesting a more complete,
- * multi-page feel rather than a single generate-button screen.
+ * Multi-tab prototype UI (Section 3.7). Split into "Roster & Payroll" (which
+ * now offers item #3, an Automatic/Manual toggle - see buildRosterTab) and
+ * "Employees" (registration + listing) - added per supervisor feedback
+ * requesting a more complete, multi-page feel rather than a single
+ * generate-button screen.
  */
 public class MainApp extends Application {
 
     // --- Roster & Payroll tab ---
     private final TableView<PayrollRow> payrollTable = new TableView<>();
     private final Label statusLabel = new Label("Ready. Click 'Generate Roster & Payroll' to run.");
+    private final RadioButton autoRadio = new RadioButton("Automatic (CP-SAT Solver)");
+    private final RadioButton manualRadio = new RadioButton("Manual Assignment");
+    private final BorderPane rosterContent = new BorderPane();
+    private List<Employee> cachedEmployees;
+    private List<Shift> cachedShifts;
+    private ManualAssignmentPane manualPane;
 
     // --- Employees tab ---
     private final TableView<EmployeeRow> employeeTable = new TableView<>();
@@ -76,18 +85,42 @@ public class MainApp extends Application {
 
     // ---------------- Roster & Payroll tab ----------------
 
+    /**
+     * Item #3 (supervisor-requested): an Automatic/Manual radio toggle.
+     * Automatic keeps running the existing CP-SAT pipeline unchanged.
+     * Manual shows ManualAssignmentPane instead and skips the solver
+     * entirely - see computeManualPayroll(). Both paths end at the same
+     * PayrollCalculator call, so a manual roster and a solved roster are
+     * always priced identically (Section 3.5 / 2.2.3).
+     */
     private BorderPane buildRosterTab() {
-        Button generateButton = new Button("Generate Roster & Payroll");
-        generateButton.setOnAction(e -> runPipeline());
+        ToggleGroup modeGroup = new ToggleGroup();
+        autoRadio.setToggleGroup(modeGroup);
+        manualRadio.setToggleGroup(modeGroup);
+        autoRadio.setSelected(true);
+        modeGroup.selectedToggleProperty().addListener((obs, oldT, newT) -> refreshRosterModeView());
 
-        HBox topBar = new HBox(10, generateButton, statusLabel);
+        Button generateButton = new Button("Generate Roster & Payroll");
+        generateButton.setOnAction(e -> {
+            if (manualRadio.isSelected()) {
+                computeManualPayroll();
+            } else {
+                runAutoPipeline();
+            }
+        });
+
+        HBox topBar = new HBox(15, autoRadio, manualRadio, generateButton, statusLabel);
+        topBar.setAlignment(Pos.CENTER_LEFT);
         topBar.setPadding(new Insets(10));
 
         setupPayrollTableColumns();
+        rosterContent.setCenter(payrollTable);
 
         BorderPane root = new BorderPane();
         root.setTop(topBar);
-        root.setCenter(payrollTable);
+        root.setCenter(rosterContent);
+
+        loadShiftDataForRoster();
         return root;
     }
 
@@ -107,7 +140,47 @@ public class MainApp extends Application {
         payrollTable.getColumns().addAll(nameCol, hoursCol, otCol, payCol);
     }
 
-    private void runPipeline() {
+    /** Loads employees/shifts/availability once so Manual mode has candidates without re-querying MySQL on every toggle. */
+    private void loadShiftDataForRoster() {
+        Thread worker = new Thread(() -> {
+            try {
+                List<Employee> employees = new EmployeeDao().findAllActive();
+                List<Shift> shifts = new ShiftDao().findAll();
+                List<Availability> availability = new AvailabilityDao().findAll();
+                javafx.application.Platform.runLater(() -> {
+                    cachedEmployees = employees;
+                    cachedShifts = shifts;
+                    manualPane = new ManualAssignmentPane(employees, shifts, availability);
+                    refreshRosterModeView();
+                });
+            } catch (Exception ex) {
+                javafx.application.Platform.runLater(() ->
+                        statusLabel.setText("Error loading shift data: " + ex.getMessage()));
+            }
+        });
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private void refreshRosterModeView() {
+        if (manualRadio.isSelected()) {
+            if (manualPane == null) {
+                rosterContent.setCenter(new Label("Loading employees, shifts and availability..."));
+            } else {
+                SplitPane split = new SplitPane();
+                split.setOrientation(Orientation.VERTICAL);
+                split.getItems().setAll(manualPane, payrollTable);
+                split.setDividerPositions(0.65);
+                rosterContent.setCenter(split);
+            }
+            statusLabel.setText("Pick who works each shift, then click 'Generate Roster & Payroll'.");
+        } else {
+            rosterContent.setCenter(payrollTable);
+            statusLabel.setText("Ready. Click 'Generate Roster & Payroll' to run the CP-SAT solver.");
+        }
+    }
+
+    private void runAutoPipeline() {
         Thread worker = new Thread(() -> {
             try {
                 System.out.println("[UI] Starting pipeline...");
@@ -163,6 +236,50 @@ public class MainApp extends Application {
         });
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /**
+     * Manual-mode path for the Generate button: skips SchedulingEngine
+     * entirely and builds the roster straight from whatever the admin
+     * picked in ManualAssignmentPane, validates it against the two hard
+     * constraints that can't be filtered per-slot, then reuses the exact
+     * same PayrollCalculator as the automatic path.
+     */
+    private void computeManualPayroll() {
+        if (manualPane == null || cachedEmployees == null || cachedShifts == null) {
+            statusLabel.setText("Shift data is still loading - please wait a moment and try again.");
+            return;
+        }
+
+        List<RosterAssignment> assignments = manualPane.buildAssignments();
+        ManualScheduleValidator.ValidationResult validation =
+                new ManualScheduleValidator().validate(cachedEmployees, cachedShifts, assignments);
+
+        manualPane.setWarningText(validation.isClean()
+                ? ""
+                : "Compliance warnings (NO_OVERLAP / MAX_HOURS):\n" + String.join("\n", validation.violations));
+
+        Map<Integer, Shift> shiftsById = cachedShifts.stream()
+                .collect(Collectors.toMap(Shift::getShiftId, s -> s));
+        List<PayrollRecord> payroll = new PayrollCalculator()
+                .calculate(cachedEmployees, shiftsById, assignments);
+
+        ObservableList<PayrollRow> rows = FXCollections.observableArrayList();
+        for (PayrollRecord p : payroll) {
+            rows.add(new PayrollRow(
+                    p.getEmployeeName(),
+                    String.format("%.1f", p.getTotalHours()),
+                    String.format("%.1f", p.getOvertimeHours()),
+                    String.format("%.2f", p.getTotalPay())
+            ));
+        }
+        payrollTable.setItems(rows);
+
+        statusLabel.setText(String.format(
+                "Manual mode | Coverage: %.0f%% (%d/%d slots filled) | Warnings: %d",
+                validation.coveragePercent(),
+                validation.totalSlots - validation.unfilledSlots, validation.totalSlots,
+                validation.violations.size()));
     }
 
     // ---------------- Employees tab ----------------
