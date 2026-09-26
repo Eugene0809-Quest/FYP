@@ -276,6 +276,18 @@ CREATE TABLE audit_log (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
+-- 17. PUBLIC_HOLIDAY — gazetted public holidays (supervisor item #4).
+--     Checked against each shift's actual calendar date (Shift.actualDate,
+--     Java side) to apply the 2x public-holiday pay premium in
+--     PayrollCalculator - see Section 3.5.
+-- ------------------------------------------------------------
+CREATE TABLE public_holiday (
+    holiday_id    INT AUTO_INCREMENT PRIMARY KEY,
+    holiday_date  DATE NOT NULL UNIQUE,
+    description   VARCHAR(255) NOT NULL
+) ENGINE=InnoDB;
+
+-- ------------------------------------------------------------
 -- Helpful indexes for solver queries
 -- ------------------------------------------------------------
 CREATE INDEX idx_availability_employee_day ON availability(employee_id, day_of_week);

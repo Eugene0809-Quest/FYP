@@ -1,7 +1,8 @@
 package com.questiu.scheduler.model;
 
-import java.time.LocalTime;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalTime;
 
 /**
  * A single shift slot to be filled (Section 3.4 - decision problem input).
@@ -43,6 +44,16 @@ public class Shift {
     public boolean overlapsWith(Shift other) {
         if (this.dayOfWeek != other.dayOfWeek) return false;
         return this.startTime.isBefore(other.endTime) && other.startTime.isBefore(this.endTime);
+    }
+
+    /**
+     * The real calendar date this shift falls on for a given roster week
+     * (item #4 - public holiday calculation). weekStartDate is assumed to
+     * be the Monday of that week, matching dayOfWeek's 1=Monday convention
+     * (see DayOfWeekMapper) - so day 1 falls ON weekStartDate itself.
+     */
+    public LocalDate actualDate(LocalDate weekStartDate) {
+        return weekStartDate.plusDays(dayOfWeek - 1);
     }
 
     @Override

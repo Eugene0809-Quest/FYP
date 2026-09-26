@@ -2,6 +2,7 @@ package com.questiu.scheduler.ui;
 
 import com.questiu.scheduler.dao.AvailabilityDao;
 import com.questiu.scheduler.dao.EmployeeDao;
+import com.questiu.scheduler.dao.PublicHolidayDao;
 import com.questiu.scheduler.dao.RoleDao;
 import com.questiu.scheduler.dao.ShiftDao;
 import com.questiu.scheduler.model.*;
@@ -21,16 +22,20 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.stage.Stage;
 
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.temporal.TemporalAdjusters;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Multi-tab prototype UI (Section 3.7). Split into "Roster & Payroll" (which
- * now offers item #3, an Automatic/Manual toggle - see buildRosterTab) and
- * "Employees" (registration + listing) - added per supervisor feedback
- * requesting a more complete, multi-page feel rather than a single
- * generate-button screen.
+ * Multi-tab prototype UI (Section 3.7). "Roster & Payroll" offers item #3
+ * (Automatic/Manual toggle) and item #4 (a "Week starting" picker feeding
+ * public-holiday-aware payroll - see runAutoPipeline/computeManualPayroll).
+ * "Employees" is registration + listing. "Public Holidays" (item #4) lets
+ * the admin maintain the calendar those payroll calls check against.
  */
 public class MainApp extends Application {
 
@@ -39,6 +44,7 @@ public class MainApp extends Application {
     private final Label statusLabel = new Label("Ready. Click 'Generate Roster & Payroll' to run.");
     private final RadioButton autoRadio = new RadioButton("Automatic (CP-SAT Solver)");
     private final RadioButton manualRadio = new RadioButton("Manual Assignment");
+    private final DatePicker weekStartPicker = new DatePicker(mondayOf(LocalDate.now()));
     private final BorderPane rosterContent = new BorderPane();
     private List<Employee> cachedEmployees;
     private List<Shift> cachedShifts;
@@ -64,6 +70,7 @@ public class MainApp extends Application {
         TabPane tabs = new TabPane();
         tabs.getTabs().add(new Tab("Roster & Payroll", buildRosterTab()));
         tabs.getTabs().add(new Tab("Employees", buildEmployeesTab(stage)));
+        tabs.getTabs().add(new Tab("Public Holidays", new PublicHolidayPane()));
         tabs.getTabs().forEach(t -> t.setClosable(false));
 
         Label sessionLabel = new Label(
@@ -79,19 +86,22 @@ public class MainApp extends Application {
         root.setTop(sessionBar);
         root.setCenter(tabs);
 
-        stage.setScene(new Scene(root, 850, 580));
+        stage.setScene(new Scene(root, 900, 600));
         loadEmployeesIntoTable();
     }
 
     // ---------------- Roster & Payroll tab ----------------
 
     /**
-     * Item #3 (supervisor-requested): an Automatic/Manual radio toggle.
-     * Automatic keeps running the existing CP-SAT pipeline unchanged.
-     * Manual shows ManualAssignmentPane instead and skips the solver
-     * entirely - see computeManualPayroll(). Both paths end at the same
-     * PayrollCalculator call, so a manual roster and a solved roster are
-     * always priced identically (Section 3.5 / 2.2.3).
+     * Item #3: an Automatic/Manual radio toggle. Automatic keeps running the
+     * existing CP-SAT pipeline unchanged; Manual shows ManualAssignmentPane
+     * instead and skips the solver entirely (computeManualPayroll). Both
+     * paths end at the same PayrollCalculator call, so a manual roster and a
+     * solved roster are always priced identically (Section 3.5 / 2.2.3).
+     *
+     * Item #4: the "Week starting" DatePicker tells both paths which Monday
+     * shift_definition.day_of_week should be measured from, so shifts can be
+     * checked against the public_holiday calendar for 2x holiday pay.
      */
     private BorderPane buildRosterTab() {
         ToggleGroup modeGroup = new ToggleGroup();
@@ -99,6 +109,10 @@ public class MainApp extends Application {
         manualRadio.setToggleGroup(modeGroup);
         autoRadio.setSelected(true);
         modeGroup.selectedToggleProperty().addListener((obs, oldT, newT) -> refreshRosterModeView());
+
+        weekStartPicker.setPrefWidth(130);
+        weekStartPicker.setTooltip(new Tooltip(
+                "The Monday of the week you're generating a roster for - matched against the Public Holidays calendar."));
 
         Button generateButton = new Button("Generate Roster & Payroll");
         generateButton.setOnAction(e -> {
@@ -109,7 +123,8 @@ public class MainApp extends Application {
             }
         });
 
-        HBox topBar = new HBox(15, autoRadio, manualRadio, generateButton, statusLabel);
+        HBox topBar = new HBox(15, autoRadio, manualRadio,
+                new Label("Week starting:"), weekStartPicker, generateButton, statusLabel);
         topBar.setAlignment(Pos.CENTER_LEFT);
         topBar.setPadding(new Insets(10));
 
@@ -134,10 +149,13 @@ public class MainApp extends Application {
         TableColumn<PayrollRow, String> otCol = new TableColumn<>("Overtime Hours");
         otCol.setCellValueFactory(new PropertyValueFactory<>("overtime"));
 
+        TableColumn<PayrollRow, String> holidayCol = new TableColumn<>("Holiday Pay (RM)");
+        holidayCol.setCellValueFactory(new PropertyValueFactory<>("holidayPay"));
+
         TableColumn<PayrollRow, String> payCol = new TableColumn<>("Total Pay (RM)");
         payCol.setCellValueFactory(new PropertyValueFactory<>("pay"));
 
-        payrollTable.getColumns().addAll(nameCol, hoursCol, otCol, payCol);
+        payrollTable.getColumns().addAll(nameCol, hoursCol, otCol, holidayCol, payCol);
     }
 
     /** Loads employees/shifts/availability once so Manual mode has candidates without re-querying MySQL on every toggle. */
@@ -180,7 +198,14 @@ public class MainApp extends Application {
         }
     }
 
+    /** Snaps any picked date to the Monday of its week, so day_of_week=1 always lines up with weekStart itself. */
+    private static LocalDate mondayOf(LocalDate date) {
+        return date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+    }
+
     private void runAutoPipeline() {
+        LocalDate weekStart = mondayOf(weekStartPicker.getValue() != null ? weekStartPicker.getValue() : LocalDate.now());
+
         Thread worker = new Thread(() -> {
             try {
                 System.out.println("[UI] Starting pipeline...");
@@ -192,6 +217,8 @@ public class MainApp extends Application {
                 System.out.println("[UI] Loaded " + shifts.size() + " shifts");
                 List<Availability> availability = new AvailabilityDao().findAll();
                 System.out.println("[UI] Loaded " + availability.size() + " availability rows");
+                Set<LocalDate> publicHolidays = new PublicHolidayDao().findAllDates();
+                System.out.println("[UI] Loaded " + publicHolidays.size() + " public holidays on file");
 
                 javafx.application.Platform.runLater(() -> statusLabel.setText("Solving with CP-SAT..."));
                 System.out.println("[UI] Calling SchedulingEngine.solve()...");
@@ -208,8 +235,12 @@ public class MainApp extends Application {
                 Map<Integer, Shift> shiftsById = shifts.stream()
                         .collect(Collectors.toMap(Shift::getShiftId, s -> s));
                 List<PayrollRecord> payroll = new PayrollCalculator()
-                        .calculate(employees, shiftsById, result.assignments);
+                        .calculate(employees, shiftsById, result.assignments, weekStart, publicHolidays);
                 System.out.println("[UI] Payroll calculated for " + payroll.size() + " employees");
+
+                long holidaysThisWeek = publicHolidays.stream()
+                        .filter(d -> !d.isBefore(weekStart) && d.isBefore(weekStart.plusDays(7)))
+                        .count();
 
                 ObservableList<PayrollRow> rows = FXCollections.observableArrayList();
                 for (PayrollRecord p : payroll) {
@@ -217,14 +248,16 @@ public class MainApp extends Application {
                             p.getEmployeeName(),
                             String.format("%.1f", p.getTotalHours()),
                             String.format("%.1f", p.getOvertimeHours()),
+                            String.format("%.2f", p.getHolidayPay()),
                             String.format("%.2f", p.getTotalPay())
                     ));
                 }
 
                 javafx.application.Platform.runLater(() -> {
                     payrollTable.setItems(rows);
-                    statusLabel.setText(String.format("Status: %s | Solve time: %d ms | Unfilled slots: %d",
-                            result.status, result.solveTimeMillis, result.totalUnfilled));
+                    statusLabel.setText(String.format(
+                            "Status: %s | Solve time: %d ms | Unfilled slots: %d | Week: %s | Holidays this week: %d",
+                            result.status, result.solveTimeMillis, result.totalUnfilled, weekStart, holidaysThisWeek));
                 });
                 System.out.println("[UI] Done.");
 
@@ -243,12 +276,22 @@ public class MainApp extends Application {
      * entirely and builds the roster straight from whatever the admin
      * picked in ManualAssignmentPane, validates it against the two hard
      * constraints that can't be filtered per-slot, then reuses the exact
-     * same PayrollCalculator as the automatic path.
+     * same PayrollCalculator (including the item #4 holiday premium) as the
+     * automatic path.
      */
     private void computeManualPayroll() {
         if (manualPane == null || cachedEmployees == null || cachedShifts == null) {
             statusLabel.setText("Shift data is still loading - please wait a moment and try again.");
             return;
+        }
+
+        LocalDate weekStart = mondayOf(weekStartPicker.getValue() != null ? weekStartPicker.getValue() : LocalDate.now());
+        Set<LocalDate> publicHolidays;
+        try {
+            publicHolidays = new PublicHolidayDao().findAllDates();
+        } catch (Exception ex) {
+            statusLabel.setText("Error loading public holidays: " + ex.getMessage());
+            publicHolidays = Set.of();
         }
 
         List<RosterAssignment> assignments = manualPane.buildAssignments();
@@ -262,7 +305,7 @@ public class MainApp extends Application {
         Map<Integer, Shift> shiftsById = cachedShifts.stream()
                 .collect(Collectors.toMap(Shift::getShiftId, s -> s));
         List<PayrollRecord> payroll = new PayrollCalculator()
-                .calculate(cachedEmployees, shiftsById, assignments);
+                .calculate(cachedEmployees, shiftsById, assignments, weekStart, publicHolidays);
 
         ObservableList<PayrollRow> rows = FXCollections.observableArrayList();
         for (PayrollRecord p : payroll) {
@@ -270,16 +313,20 @@ public class MainApp extends Application {
                     p.getEmployeeName(),
                     String.format("%.1f", p.getTotalHours()),
                     String.format("%.1f", p.getOvertimeHours()),
+                    String.format("%.2f", p.getHolidayPay()),
                     String.format("%.2f", p.getTotalPay())
             ));
         }
         payrollTable.setItems(rows);
 
+        long holidaysThisWeek = publicHolidays.stream()
+                .filter(d -> !d.isBefore(weekStart) && d.isBefore(weekStart.plusDays(7)))
+                .count();
         statusLabel.setText(String.format(
-                "Manual mode | Coverage: %.0f%% (%d/%d slots filled) | Warnings: %d",
-                validation.coveragePercent(),
+                "Manual mode | Week: %s | Coverage: %.0f%% (%d/%d slots filled) | Warnings: %d | Holidays this week: %d",
+                weekStart, validation.coveragePercent(),
                 validation.totalSlots - validation.unfilledSlots, validation.totalSlots,
-                validation.violations.size()));
+                validation.violations.size(), holidaysThisWeek));
     }
 
     // ---------------- Employees tab ----------------
@@ -389,18 +436,20 @@ public class MainApp extends Application {
     }
 
     public static class PayrollRow {
-        private final String name, hours, overtime, pay;
+        private final String name, hours, overtime, holidayPay, pay;
 
-        public PayrollRow(String name, String hours, String overtime, String pay) {
+        public PayrollRow(String name, String hours, String overtime, String holidayPay, String pay) {
             this.name = name;
             this.hours = hours;
             this.overtime = overtime;
+            this.holidayPay = holidayPay;
             this.pay = pay;
         }
 
         public String getName() { return name; }
         public String getHours() { return hours; }
         public String getOvertime() { return overtime; }
+        public String getHolidayPay() { return holidayPay; }
         public String getPay() { return pay; }
     }
 
