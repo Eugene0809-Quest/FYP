@@ -20,9 +20,28 @@ import java.util.stream.Collectors;
  * Constraint-based scheduling engine (Section 3.4), implemented with the
  * OR-Tools CP-SAT solver (Section 3.4.5).
  *
- * Upgraded to implement the full weighted objective function Z from Section 3.4.4:
- * Minimizing a weighted combination of unfilled shifts (lambda_1), labor cost (lambda_2),
- * and overtime hours (lambda_3).
+ * Objective Z (Section 3.4.4) currently wires in three of its four terms:
+ * unfilled shifts (dominant), labour cost proxy, and workload imbalance
+ * (added - see the "Workload imbalance" block below). Preference violations
+ * (the employee_preference table) are still NOT read by the solver - this
+ * remains a known limitation, unchanged by this update.
+ *
+ * KNOWN LIMITATION - Overtime penalty term: this term is a permanent no-op
+ * under Automatic mode and was deliberately left that way rather than
+ * "fixed" to look more correct. Hard constraint 5 below already forbids
+ * anyone from ever being assigned more than their own max_hours_week - so
+ * real overtime (hours beyond that cap) can never occur in a CP-SAT-solved
+ * schedule; PayrollCalculator's overtimeHours is always 0 for one. Setting
+ * this term's threshold to match each employee's own max_hours_week (which
+ * would look like the "obvious" fix) would only make an already-inert term
+ * exactly as inert, since the threshold and the hard cap would then be
+ * identical and the soft variable could never activate either way. Turning
+ * it into a genuinely active term would mean redefining what "Overtime
+ * penalty" means (e.g. discouraging hours near, rather than over, the cap)
+ * - which is really the WorkloadImbalance term's job, now implemented
+ * separately below under its own correct name instead of overloading this
+ * one. Left as flat-40h so the code doesn't silently claim a fix it can't
+ * actually make.
  */
 public class SchedulingEngine {
 
@@ -127,19 +146,21 @@ public class SchedulingEngine {
             model.addLessOrEqual(hoursExpr, maxHoursScaled);
         }
 
-        // ---- Objective Z: Full Weighted Multi-Objective (Section 3.4.4) ----
+        // ---- Objective Z: Weighted Multi-Objective (Section 3.4.4) ----
         LinearExprBuilder objective = LinearExpr.newBuilder();
 
         // 1. Unfilled shifts penalty (lambda_1 dominant weight to ensure coverage first)
         for (IntVar u : unfilled.values()) {
-            objective.addTerm(u, 10000); 
+            objective.addTerm(u, 10000);
         }
 
         // Track employee hours for cost and overtime minimization
         for (Employee e : employees) {
-            // 2. Overtime penalty (lambda_3): standard threshold is 40 hours (4000 hundredths)
+            // 2. Overtime penalty (lambda_3): KNOWN LIMITATION, permanently a
+            // no-op under Automatic mode - see class javadoc for why this
+            // was deliberately left as-is rather than "fixed" to look correct.
             IntVar otVar = model.newIntVar(0, 5000, "ot_e" + e.getEmployeeId());
-            
+
             LinearExprBuilder otConstraint = LinearExpr.newBuilder();
             for (Shift s : shifts) {
                 long coeff = Math.round(s.durationHours() * 100);
@@ -147,7 +168,7 @@ public class SchedulingEngine {
             }
             otConstraint.addTerm(otVar, -1);
             model.addLessOrEqual(otConstraint, 4000);
-            
+
             objective.addTerm(otVar, 100); // Weight for overtime hours
 
             // 3. Labor cost proxy penalty (lambda_2): proportional to total hours worked
@@ -156,6 +177,36 @@ public class SchedulingEngine {
                 objective.addTerm(x.get(key(e.getEmployeeId(), s.getShiftId())), costCoeff);
             }
         }
+
+        // 4. Workload imbalance penalty (Section 3.4.4's WorkloadImbalance term,
+        // previously unimplemented - see class javadoc). Standard linear
+        // min-max/range formulation: maxLoad tracks the most-loaded employee's
+        // scaled hours, minLoad tracks the least-loaded, and the objective
+        // minimizes their spread - so the solver prefers spreading shifts
+        // evenly across staff whenever doing so doesn't cost anything extra
+        // in unfilled demand or labour cost (both weighted far more heavily
+        // above). Built using only addTerm/addLessOrEqual against a builder,
+        // matching every other constraint in this file, to avoid relying on
+        // an OR-Tools overload this project hasn't already proven works.
+        IntVar maxLoad = model.newIntVar(0, 100000, "maxLoad");
+        IntVar minLoad = model.newIntVar(0, 100000, "minLoad");
+        for (Employee e : employees) {
+            LinearExprBuilder loadMinusMax = LinearExpr.newBuilder();
+            LinearExprBuilder minMinusLoad = LinearExpr.newBuilder();
+            for (Shift s : shifts) {
+                long coeff = Math.round(s.durationHours() * 100);
+                loadMinusMax.addTerm(x.get(key(e.getEmployeeId(), s.getShiftId())), coeff);
+                minMinusLoad.addTerm(x.get(key(e.getEmployeeId(), s.getShiftId())), -coeff);
+            }
+            loadMinusMax.addTerm(maxLoad, -1);
+            model.addLessOrEqual(loadMinusMax, 0); // load - maxLoad <= 0  =>  load <= maxLoad
+
+            minMinusLoad.addTerm(minLoad, 1);
+            model.addLessOrEqual(minMinusLoad, 0); // minLoad - load <= 0  =>  minLoad <= load
+        }
+        final long WORKLOAD_IMBALANCE_WEIGHT = 5; // tunable - see class javadoc; not yet read from objective_weight table
+        objective.addTerm(maxLoad, WORKLOAD_IMBALANCE_WEIGHT);
+        objective.addTerm(minLoad, -WORKLOAD_IMBALANCE_WEIGHT);
 
         model.minimize(objective);
 

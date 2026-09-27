@@ -14,12 +14,14 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Implements the payroll formula from Section 3.5, now extended for item #4
- * (public holiday premium pay):
+ * Implements the payroll formula from Section 3.5, extended for item #4
+ * (public holiday premium) and item #5 (EPF/SOCSO/EIS statutory contributions):
  *   RegularPay_e       = Rate_e * min(NormalHours_e, H_e)
  *   OvertimePay_e      = Rate_e * 1.5 * max(0, NormalHours_e - H_e)
  *   PublicHolidayPay_e = Rate_e * 2.0 * HolidayHours_e
- *   TotalPay_e         = RegularPay_e + OvertimePay_e + PublicHolidayPay_e
+ *   TotalPay_e         = RegularPay_e + OvertimePay_e + PublicHolidayPay_e   (gross)
+ *   EPF/SOCSO/EIS_e    = see computeStatutory() and StatutoryRates
+ *   NetPay_e           = TotalPay_e - EmployeeEpf_e - EmployeeSocso_e - EmployeeEis_e
  *
  * SIMPLIFICATION (flag for the report's scope section, same style as the
  * existing "Known simplifications" list): hours worked on a gazetted public
@@ -28,7 +30,8 @@ import java.util.stream.Collectors;
  * weekly hour count. This mirrors how public holiday work is a separate
  * entitlement under the Employment Act 1955 rather than ordinary overtime,
  * but does NOT implement every nuance of the Act (e.g. the different
- * treatment for monthly-rated vs. daily-rated employees).
+ * treatment for monthly-rated vs. daily-rated employees). See StatutoryRates
+ * for the EPF/SOCSO/EIS simplifications.
  *
  * Reads only from the already-solved/assigned roster - this is what
  * guarantees the payroll figure can never drift out of sync with the
@@ -97,7 +100,54 @@ public class PayrollCalculator {
                 .setScale(2, RoundingMode.HALF_UP);
         BigDecimal totalPay = regularPay.add(overtimePay).add(holidayPay);
 
+        PayrollRecord.StatutoryBreakdown statutory = computeStatutory(regularPay, holidayPay, totalPay);
+
         return new PayrollRecord(emp.getEmployeeId(), emp.getFullName(), totalHours,
-                regularHours, overtimeHours, holidayHours, regularPay, overtimePay, holidayPay, totalPay);
+                regularHours, overtimeHours, holidayHours, regularPay, overtimePay, holidayPay,
+                totalPay, statutory);
+    }
+
+    /**
+     * Item #5: EPF/SOCSO/EIS statutory contributions. Wage base = regularPay
+     * + holidayPay only - overtime is excluded, matching KWSP's "payments
+     * not subject to EPF" guidance (a real-world detail worth naming in the
+     * report alongside the other simplifications).
+     *
+     * Because this system generates one week's payroll at a time with no
+     * persisted history across weeks (a known limitation - see README), the
+     * wage base is scaled up by 52/12 purely to estimate a MONTHLY figure
+     * for the two threshold decisions the official schemes make on a
+     * monthly basis: which EPF employer tier applies (13% up to
+     * RM5,000/month, else 12%), and whether the RM6,000/month SOCSO/EIS
+     * wage ceiling has been reached. The RM amounts actually charged below
+     * are still for this week's real wage base, not the monthly estimate.
+     */
+    private PayrollRecord.StatutoryBreakdown computeStatutory(BigDecimal regularPay, BigDecimal holidayPay,
+                                                               BigDecimal totalPay) {
+        BigDecimal wageBase = regularPay.add(holidayPay); // excludes overtime
+
+        BigDecimal estimatedMonthlyWage = wageBase.multiply(StatutoryRates.WEEKS_PER_MONTH);
+
+        BigDecimal epfEmployerRate = estimatedMonthlyWage.compareTo(StatutoryRates.EPF_EMPLOYER_TIER_THRESHOLD) <= 0
+                ? StatutoryRates.EPF_EMPLOYER_RATE_LOWER
+                : StatutoryRates.EPF_EMPLOYER_RATE_UPPER;
+
+        BigDecimal employeeEpf = wageBase.multiply(StatutoryRates.EPF_EMPLOYEE_RATE).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal employerEpf = wageBase.multiply(epfEmployerRate).setScale(2, RoundingMode.HALF_UP);
+
+        BigDecimal weeklyCeiling = StatutoryRates.SOCSO_EIS_MONTHLY_CEILING
+                .divide(StatutoryRates.WEEKS_PER_MONTH, 2, RoundingMode.HALF_UP);
+        BigDecimal socsoEisWageBase = wageBase.min(weeklyCeiling);
+
+        BigDecimal employeeSocso = socsoEisWageBase.multiply(StatutoryRates.SOCSO_EMPLOYEE_RATE).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal employerSocso = socsoEisWageBase.multiply(StatutoryRates.SOCSO_EMPLOYER_RATE).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal employeeEis = socsoEisWageBase.multiply(StatutoryRates.EIS_EMPLOYEE_RATE).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal employerEis = socsoEisWageBase.multiply(StatutoryRates.EIS_EMPLOYER_RATE).setScale(2, RoundingMode.HALF_UP);
+
+        BigDecimal netPay = totalPay.subtract(employeeEpf).subtract(employeeSocso).subtract(employeeEis);
+        BigDecimal employerTotalCost = totalPay.add(employerEpf).add(employerSocso).add(employerEis);
+
+        return new PayrollRecord.StatutoryBreakdown(employeeEpf, employerEpf, employeeSocso, employerSocso,
+                employeeEis, employerEis, netPay, employerTotalCost);
     }
 }

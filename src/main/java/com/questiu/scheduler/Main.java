@@ -64,7 +64,7 @@ public class Main {
             return;
         }
 
-        System.out.println("=== Payroll (Section 3.5 formula, incl. public holiday premium) ===");
+        System.out.println("=== Payroll (Section 3.5 formula, incl. public holiday premium and EPF/SOCSO/EIS) ===");
         Map<Integer, Shift> shiftsById = shifts.stream()
                 .collect(Collectors.toMap(Shift::getShiftId, s -> s));
         PayrollCalculator calc = new PayrollCalculator();
@@ -73,7 +73,11 @@ public class Main {
             System.out.println(record);
         }
 
-        double totalPayroll = payroll.stream().mapToDouble(p -> p.getTotalPay().doubleValue()).sum();
-        System.out.printf("%nEstimated total weekly payroll: RM%.2f%n", totalPayroll);
+        double totalGrossPayroll = payroll.stream().mapToDouble(p -> p.getTotalPay().doubleValue()).sum();
+        double totalNetPayroll = payroll.stream().mapToDouble(p -> p.getStatutory().getNetPay().doubleValue()).sum();
+        double totalEmployerCost = payroll.stream().mapToDouble(p -> p.getStatutory().getEmployerTotalCost().doubleValue()).sum();
+        System.out.printf("%nEstimated total weekly gross payroll: RM%.2f%n", totalGrossPayroll);
+        System.out.printf("Estimated total weekly net payroll (after employee EPF/SOCSO/EIS): RM%.2f%n", totalNetPayroll);
+        System.out.printf("Estimated total weekly employer cost (incl. employer EPF/SOCSO/EIS): RM%.2f%n", totalEmployerCost);
     }
 }

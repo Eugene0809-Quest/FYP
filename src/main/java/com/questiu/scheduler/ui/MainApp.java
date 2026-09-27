@@ -20,6 +20,8 @@ import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
 import java.time.DayOfWeek;
@@ -32,10 +34,11 @@ import java.util.stream.Collectors;
 
 /**
  * Multi-tab prototype UI (Section 3.7). "Roster & Payroll" offers item #3
- * (Automatic/Manual toggle) and item #4 (a "Week starting" picker feeding
- * public-holiday-aware payroll - see runAutoPipeline/computeManualPayroll).
- * "Employees" is registration + listing. "Public Holidays" (item #4) lets
- * the admin maintain the calendar those payroll calls check against.
+ * (Automatic/Manual toggle), item #4 (a "Week starting" picker feeding
+ * public-holiday-aware payroll), and item #5 (EPF/SOCSO/EIS columns and net
+ * pay - see PayrollCalculator/StatutoryRates for the formulas). "Employees"
+ * is registration + listing. "Public Holidays" (item #4) lets the admin
+ * maintain the calendar those payroll calls check against.
  */
 public class MainApp extends Application {
 
@@ -86,7 +89,9 @@ public class MainApp extends Application {
         root.setTop(sessionBar);
         root.setCenter(tabs);
 
-        stage.setScene(new Scene(root, 900, 600));
+        stage.setScene(new Scene(root, 1100, 650));
+        stage.setMinWidth(950);
+        stage.setMinHeight(500);
         loadEmployeesIntoTable();
     }
 
@@ -123,9 +128,18 @@ public class MainApp extends Application {
             }
         });
 
-        HBox topBar = new HBox(15, autoRadio, manualRadio,
-                new Label("Week starting:"), weekStartPicker, generateButton, statusLabel);
-        topBar.setAlignment(Pos.CENTER_LEFT);
+        HBox controlsRow = new HBox(15, autoRadio, manualRadio,
+                new Label("Week starting:"), weekStartPicker, generateButton);
+        controlsRow.setAlignment(Pos.CENTER_LEFT);
+
+        statusLabel.setWrapText(true);
+        statusLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #444;");
+        HBox statusRow = new HBox(statusLabel);
+        statusRow.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(statusLabel, Priority.ALWAYS);
+        statusLabel.setMaxWidth(Double.MAX_VALUE);
+
+        VBox topBar = new VBox(6, controlsRow, statusRow);
         topBar.setPadding(new Insets(10));
 
         setupPayrollTableColumns();
@@ -152,10 +166,22 @@ public class MainApp extends Application {
         TableColumn<PayrollRow, String> holidayCol = new TableColumn<>("Holiday Pay (RM)");
         holidayCol.setCellValueFactory(new PropertyValueFactory<>("holidayPay"));
 
-        TableColumn<PayrollRow, String> payCol = new TableColumn<>("Total Pay (RM)");
+        TableColumn<PayrollRow, String> payCol = new TableColumn<>("Gross Pay (RM)");
         payCol.setCellValueFactory(new PropertyValueFactory<>("pay"));
 
-        payrollTable.getColumns().addAll(nameCol, hoursCol, otCol, holidayCol, payCol);
+        TableColumn<PayrollRow, String> epfCol = new TableColumn<>("EPF (RM)");
+        epfCol.setCellValueFactory(new PropertyValueFactory<>("epf"));
+
+        TableColumn<PayrollRow, String> socsoCol = new TableColumn<>("SOCSO (RM)");
+        socsoCol.setCellValueFactory(new PropertyValueFactory<>("socso"));
+
+        TableColumn<PayrollRow, String> eisCol = new TableColumn<>("EIS (RM)");
+        eisCol.setCellValueFactory(new PropertyValueFactory<>("eis"));
+
+        TableColumn<PayrollRow, String> netPayCol = new TableColumn<>("Net Pay (RM)");
+        netPayCol.setCellValueFactory(new PropertyValueFactory<>("netPay"));
+
+        payrollTable.getColumns().addAll(nameCol, hoursCol, otCol, holidayCol, payCol, epfCol, socsoCol, eisCol, netPayCol);
     }
 
     /** Loads employees/shifts/availability once so Manual mode has candidates without re-querying MySQL on every toggle. */
@@ -249,15 +275,23 @@ public class MainApp extends Application {
                             String.format("%.1f", p.getTotalHours()),
                             String.format("%.1f", p.getOvertimeHours()),
                             String.format("%.2f", p.getHolidayPay()),
-                            String.format("%.2f", p.getTotalPay())
+                            String.format("%.2f", p.getTotalPay()),
+                            String.format("%.2f", p.getStatutory().getEmployeeEpf()),
+                            String.format("%.2f", p.getStatutory().getEmployeeSocso()),
+                            String.format("%.2f", p.getStatutory().getEmployeeEis()),
+                            String.format("%.2f", p.getStatutory().getNetPay())
                     ));
                 }
+
+                double totalNet = payroll.stream().mapToDouble(p -> p.getStatutory().getNetPay().doubleValue()).sum();
+                double totalEmployerCost = payroll.stream().mapToDouble(p -> p.getStatutory().getEmployerTotalCost().doubleValue()).sum();
 
                 javafx.application.Platform.runLater(() -> {
                     payrollTable.setItems(rows);
                     statusLabel.setText(String.format(
-                            "Status: %s | Solve time: %d ms | Unfilled slots: %d | Week: %s | Holidays this week: %d",
-                            result.status, result.solveTimeMillis, result.totalUnfilled, weekStart, holidaysThisWeek));
+                            "Status: %s | Solve time: %d ms | Unfilled slots: %d | Week: %s | Holidays this week: %d | Net payroll: RM%.2f | Employer cost: RM%.2f",
+                            result.status, result.solveTimeMillis, result.totalUnfilled, weekStart, holidaysThisWeek,
+                            totalNet, totalEmployerCost));
                 });
                 System.out.println("[UI] Done.");
 
@@ -314,19 +348,25 @@ public class MainApp extends Application {
                     String.format("%.1f", p.getTotalHours()),
                     String.format("%.1f", p.getOvertimeHours()),
                     String.format("%.2f", p.getHolidayPay()),
-                    String.format("%.2f", p.getTotalPay())
+                    String.format("%.2f", p.getTotalPay()),
+                    String.format("%.2f", p.getStatutory().getEmployeeEpf()),
+                    String.format("%.2f", p.getStatutory().getEmployeeSocso()),
+                    String.format("%.2f", p.getStatutory().getEmployeeEis()),
+                    String.format("%.2f", p.getStatutory().getNetPay())
             ));
         }
         payrollTable.setItems(rows);
 
+        double totalNet = payroll.stream().mapToDouble(p -> p.getStatutory().getNetPay().doubleValue()).sum();
+        double totalEmployerCost = payroll.stream().mapToDouble(p -> p.getStatutory().getEmployerTotalCost().doubleValue()).sum();
         long holidaysThisWeek = publicHolidays.stream()
                 .filter(d -> !d.isBefore(weekStart) && d.isBefore(weekStart.plusDays(7)))
                 .count();
         statusLabel.setText(String.format(
-                "Manual mode | Week: %s | Coverage: %.0f%% (%d/%d slots filled) | Warnings: %d | Holidays this week: %d",
+                "Manual mode | Week: %s | Coverage: %.0f%% (%d/%d slots filled) | Warnings: %d | Holidays this week: %d | Net payroll: RM%.2f | Employer cost: RM%.2f",
                 weekStart, validation.coveragePercent(),
                 validation.totalSlots - validation.unfilledSlots, validation.totalSlots,
-                validation.violations.size(), holidaysThisWeek));
+                validation.violations.size(), holidaysThisWeek, totalNet, totalEmployerCost));
     }
 
     // ---------------- Employees tab ----------------
@@ -436,14 +476,19 @@ public class MainApp extends Application {
     }
 
     public static class PayrollRow {
-        private final String name, hours, overtime, holidayPay, pay;
+        private final String name, hours, overtime, holidayPay, pay, epf, socso, eis, netPay;
 
-        public PayrollRow(String name, String hours, String overtime, String holidayPay, String pay) {
+        public PayrollRow(String name, String hours, String overtime, String holidayPay, String pay,
+                           String epf, String socso, String eis, String netPay) {
             this.name = name;
             this.hours = hours;
             this.overtime = overtime;
             this.holidayPay = holidayPay;
             this.pay = pay;
+            this.epf = epf;
+            this.socso = socso;
+            this.eis = eis;
+            this.netPay = netPay;
         }
 
         public String getName() { return name; }
@@ -451,6 +496,10 @@ public class MainApp extends Application {
         public String getOvertime() { return overtime; }
         public String getHolidayPay() { return holidayPay; }
         public String getPay() { return pay; }
+        public String getEpf() { return epf; }
+        public String getSocso() { return socso; }
+        public String getEis() { return eis; }
+        public String getNetPay() { return netPay; }
     }
 
     public static class EmployeeRow {
