@@ -12,6 +12,7 @@ import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.BorderPane;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -30,6 +31,11 @@ import java.util.stream.Collectors;
  * checked dynamically by ManualScheduleValidator instead and surfaced as
  * warnings here, without blocking submission (a human override channel is
  * the point of this screen).
+ *
+ * The slots are split into one inner sub-tab per role (e.g. "Front-of-House",
+ * "Kitchen") rather than one long scrolling table, since with several roles
+ * and several shifts per day the flat table ran to 40+ rows and it wasn't
+ * obvious where one role's shifts ended and the next began.
  */
 public class ManualAssignmentPane extends BorderPane {
 
@@ -70,14 +76,20 @@ public class ManualAssignmentPane extends BorderPane {
         public String getSlot() { return "Slot " + slotNumber + " of " + shift.getStaffNeeded(); }
     }
 
-    private final TableView<SlotRow> table = new TableView<>();
+    private final List<SlotRow> allRows = new ArrayList<>();
     private final Label warningLabel = new Label();
 
-    public ManualAssignmentPane(List<Employee> employees, List<Shift> shifts, List<Availability> availability) {
+    /**
+     * @param roleNamesById role_id -> role_name (e.g. from RoleDao), used only
+     *                      for the sub-tab labels; falls back to "Role #N" for
+     *                      any role_id not present in the map.
+     */
+    public ManualAssignmentPane(List<Employee> employees, List<Shift> shifts, List<Availability> availability,
+                                 Map<Integer, String> roleNamesById) {
         Map<Integer, List<Availability>> availByEmployee = availability.stream()
                 .collect(Collectors.groupingBy(Availability::getEmployeeId));
 
-        ObservableList<SlotRow> rows = FXCollections.observableArrayList();
+        // Build every slot row first (unchanged logic), then split them by role for display.
         for (Shift s : shifts) {
             List<Employee> eligible = employees.stream()
                     .filter(e -> e.getRoleId() == s.getRequiredRoleId())
@@ -85,9 +97,39 @@ public class ManualAssignmentPane extends BorderPane {
                             .stream().anyMatch(a -> a.covers(s)))
                     .collect(Collectors.toList());
             for (int slot = 1; slot <= s.getStaffNeeded(); slot++) {
-                rows.add(new SlotRow(s, slot, eligible));
+                allRows.add(new SlotRow(s, slot, eligible));
             }
         }
+
+        Map<Integer, List<SlotRow>> rowsByRole = new LinkedHashMap<>();
+        for (SlotRow row : allRows) {
+            rowsByRole.computeIfAbsent(row.shift.getRequiredRoleId(), k -> new ArrayList<>()).add(row);
+        }
+
+        TabPane roleTabs = new TabPane();
+        roleTabs.getTabs().forEach(t -> t.setClosable(false));
+        rowsByRole.entrySet().stream()
+                // Sort tabs alphabetically by role name so the order is stable and predictable
+                // across app restarts, rather than depending on database row order.
+                .sorted((a, b) -> roleNamesById.getOrDefault(a.getKey(), "Role #" + a.getKey())
+                        .compareToIgnoreCase(roleNamesById.getOrDefault(b.getKey(), "Role #" + b.getKey())))
+                .forEach(entry -> {
+                    String roleName = roleNamesById.getOrDefault(entry.getKey(), "Role #" + entry.getKey());
+                    Tab tab = new Tab(roleName, buildTable(entry.getValue()));
+                    tab.setClosable(false);
+                    roleTabs.getTabs().add(tab);
+                });
+
+        warningLabel.setStyle("-fx-text-fill: #b45309;");
+        warningLabel.setWrapText(true);
+
+        setCenter(roleTabs);
+        setBottom(warningLabel);
+        BorderPane.setMargin(warningLabel, new Insets(6, 0, 0, 0));
+    }
+
+    private TableView<SlotRow> buildTable(List<SlotRow> rowsForRole) {
+        TableView<SlotRow> table = new TableView<>();
 
         TableColumn<SlotRow, String> dayCol = new TableColumn<>("Day");
         dayCol.setCellValueFactory(new PropertyValueFactory<>("day"));
@@ -109,20 +151,14 @@ public class ManualAssignmentPane extends BorderPane {
         });
 
         table.getColumns().addAll(dayCol, timeCol, slotCol, assignCol);
-        table.setItems(rows);
-
-        warningLabel.setStyle("-fx-text-fill: #b45309;");
-        warningLabel.setWrapText(true);
-
-        setCenter(table);
-        setBottom(warningLabel);
-        BorderPane.setMargin(warningLabel, new Insets(6, 0, 0, 0));
+        table.setItems(FXCollections.observableArrayList(rowsForRole));
+        return table;
     }
 
-    /** Builds RosterAssignment entries from whatever the admin has picked so far (skips unassigned slots). */
+    /** Builds RosterAssignment entries from whatever the admin has picked so far (skips unassigned slots), across every role tab. */
     public List<RosterAssignment> buildAssignments() {
         List<RosterAssignment> result = new ArrayList<>();
-        for (SlotRow row : table.getItems()) {
+        for (SlotRow row : allRows) {
             Employee e = row.assignBox.getValue();
             if (e != null) {
                 result.add(new RosterAssignment(e.getEmployeeId(), row.shift.getShiftId()));

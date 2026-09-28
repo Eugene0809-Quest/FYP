@@ -113,7 +113,16 @@ public class MainApp extends Application {
         autoRadio.setToggleGroup(modeGroup);
         manualRadio.setToggleGroup(modeGroup);
         autoRadio.setSelected(true);
-        modeGroup.selectedToggleProperty().addListener((obs, oldT, newT) -> refreshRosterModeView());
+        modeGroup.selectedToggleProperty().addListener((obs, oldT, newT) -> {
+            if (manualRadio.isSelected()) {
+                // Re-query on every switch to Manual, not just once when this tab first
+                // opened - otherwise a new employee registered (or an availability edit
+                // made) elsewhere in the app wouldn't show up here without restarting.
+                loadShiftDataForRoster();
+            } else {
+                refreshRosterModeView();
+            }
+        });
 
         weekStartPicker.setPrefWidth(130);
         weekStartPicker.setTooltip(new Tooltip(
@@ -184,17 +193,21 @@ public class MainApp extends Application {
         payrollTable.getColumns().addAll(nameCol, hoursCol, otCol, holidayCol, payCol, epfCol, socsoCol, eisCol, netPayCol);
     }
 
-    /** Loads employees/shifts/availability once so Manual mode has candidates without re-querying MySQL on every toggle. */
+    /** Loads employees/shifts/availability/holidays fresh from MySQL - called once when this
+     *  tab first opens, and again every time the admin switches to Manual mode (see the mode
+     *  toggle listener above), so Manual mode never shows stale employee/availability data. */
     private void loadShiftDataForRoster() {
         Thread worker = new Thread(() -> {
             try {
                 List<Employee> employees = new EmployeeDao().findAllActive();
                 List<Shift> shifts = new ShiftDao().findAll();
                 List<Availability> availability = new AvailabilityDao().findAll();
+                Map<Integer, String> roleNames = new RoleDao().findAll().stream()
+                        .collect(Collectors.toMap(Role::getRoleId, Role::getRoleName));
                 javafx.application.Platform.runLater(() -> {
                     cachedEmployees = employees;
                     cachedShifts = shifts;
-                    manualPane = new ManualAssignmentPane(employees, shifts, availability);
+                    manualPane = new ManualAssignmentPane(employees, shifts, availability, roleNames);
                     refreshRosterModeView();
                 });
             } catch (Exception ex) {

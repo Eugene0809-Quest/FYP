@@ -179,34 +179,44 @@ public class SchedulingEngine {
         }
 
         // 4. Workload imbalance penalty (Section 3.4.4's WorkloadImbalance term,
-        // previously unimplemented - see class javadoc). Standard linear
-        // min-max/range formulation: maxLoad tracks the most-loaded employee's
-        // scaled hours, minLoad tracks the least-loaded, and the objective
-        // minimizes their spread - so the solver prefers spreading shifts
-        // evenly across staff whenever doing so doesn't cost anything extra
-        // in unfilled demand or labour cost (both weighted far more heavily
-        // above). Built using only addTerm/addLessOrEqual against a builder,
-        // matching every other constraint in this file, to avoid relying on
-        // an OR-Tools overload this project hasn't already proven works.
-        IntVar maxLoad = model.newIntVar(0, 100000, "maxLoad");
-        IntVar minLoad = model.newIntVar(0, 100000, "minLoad");
-        for (Employee e : employees) {
-            LinearExprBuilder loadMinusMax = LinearExpr.newBuilder();
-            LinearExprBuilder minMinusLoad = LinearExpr.newBuilder();
-            for (Shift s : shifts) {
-                long coeff = Math.round(s.durationHours() * 100);
-                loadMinusMax.addTerm(x.get(key(e.getEmployeeId(), s.getShiftId())), coeff);
-                minMinusLoad.addTerm(x.get(key(e.getEmployeeId(), s.getShiftId())), -coeff);
-            }
-            loadMinusMax.addTerm(maxLoad, -1);
-            model.addLessOrEqual(loadMinusMax, 0); // load - maxLoad <= 0  =>  load <= maxLoad
-
-            minMinusLoad.addTerm(minLoad, 1);
-            model.addLessOrEqual(minMinusLoad, 0); // minLoad - load <= 0  =>  minLoad <= load
-        }
+        // previously unimplemented - see class javadoc). Computed PER ROLE
+        // GROUP, not across all employees together: staff in different roles
+        // can't cover each other's shifts anyway (hard constraints 1/2 already
+        // forbid it), so "balancing" a Kitchen worker's hours against a
+        // Front-of-House worker's hours doesn't correspond to any real
+        // fairness concern - only spread WITHIN a role group is meaningful.
+        // Standard linear min-max/range formulation per group: maxLoad tracks
+        // the most-loaded employee's scaled hours in that role, minLoad the
+        // least-loaded, and the objective minimizes their spread - so the
+        // solver prefers spreading shifts evenly among same-role staff
+        // whenever doing so doesn't cost anything extra in unfilled demand or
+        // labour cost (both weighted far more heavily above). Built using
+        // only addTerm/addLessOrEqual against a builder, matching every other
+        // constraint in this file, to avoid relying on an OR-Tools overload
+        // this project hasn't already proven works.
         final long WORKLOAD_IMBALANCE_WEIGHT = 5; // tunable - see class javadoc; not yet read from objective_weight table
-        objective.addTerm(maxLoad, WORKLOAD_IMBALANCE_WEIGHT);
-        objective.addTerm(minLoad, -WORKLOAD_IMBALANCE_WEIGHT);
+        Map<Integer, List<Employee>> employeesByRole = employees.stream()
+                .collect(Collectors.groupingBy(Employee::getRoleId));
+        for (Map.Entry<Integer, List<Employee>> roleGroup : employeesByRole.entrySet()) {
+            IntVar maxLoad = model.newIntVar(0, 100000, "maxLoad_role" + roleGroup.getKey());
+            IntVar minLoad = model.newIntVar(0, 100000, "minLoad_role" + roleGroup.getKey());
+            for (Employee e : roleGroup.getValue()) {
+                LinearExprBuilder loadMinusMax = LinearExpr.newBuilder();
+                LinearExprBuilder minMinusLoad = LinearExpr.newBuilder();
+                for (Shift s : shifts) {
+                    long coeff = Math.round(s.durationHours() * 100);
+                    loadMinusMax.addTerm(x.get(key(e.getEmployeeId(), s.getShiftId())), coeff);
+                    minMinusLoad.addTerm(x.get(key(e.getEmployeeId(), s.getShiftId())), -coeff);
+                }
+                loadMinusMax.addTerm(maxLoad, -1);
+                model.addLessOrEqual(loadMinusMax, 0); // load - maxLoad <= 0  =>  load <= maxLoad
+
+                minMinusLoad.addTerm(minLoad, 1);
+                model.addLessOrEqual(minMinusLoad, 0); // minLoad - load <= 0  =>  minLoad <= load
+            }
+            objective.addTerm(maxLoad, WORKLOAD_IMBALANCE_WEIGHT);
+            objective.addTerm(minLoad, -WORKLOAD_IMBALANCE_WEIGHT);
+        }
 
         model.minimize(objective);
 
