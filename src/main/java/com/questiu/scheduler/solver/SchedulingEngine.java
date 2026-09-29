@@ -10,6 +10,7 @@ import com.google.ortools.sat.LinearExprBuilder;
 import com.google.ortools.sat.Literal;
 import com.questiu.scheduler.model.Availability;
 import com.questiu.scheduler.model.Employee;
+import com.questiu.scheduler.model.Preference;
 import com.questiu.scheduler.model.RosterAssignment;
 import com.questiu.scheduler.model.Shift;
 
@@ -20,11 +21,11 @@ import java.util.stream.Collectors;
  * Constraint-based scheduling engine (Section 3.4), implemented with the
  * OR-Tools CP-SAT solver (Section 3.4.5).
  *
- * Objective Z (Section 3.4.4) currently wires in three of its four terms:
- * unfilled shifts (dominant), labour cost proxy, and workload imbalance
- * (added - see the "Workload imbalance" block below). Preference violations
- * (the employee_preference table) are still NOT read by the solver - this
- * remains a known limitation, unchanged by this update.
+ * Objective Z (Section 3.4.4) now wires in all four of its terms: unfilled
+ * shifts (dominant), labour cost proxy, workload imbalance (per role group),
+ * and preference violations (the employee_preference table, read via the
+ * 5-argument solve overload). Preferences are soft: they only break ties
+ * between employees who could all legitimately work a shift.
  *
  * KNOWN LIMITATION - Overtime penalty term: this term is a permanent no-op
  * under Automatic mode and was deliberately left that way rather than
@@ -69,8 +70,15 @@ public class SchedulingEngine {
         Loader.loadNativeLibraries();
     }
 
+    /** Backwards-compatible overload: solves with no preferences (all neutral). */
     public SolveResult solve(List<Employee> employees, List<Shift> shifts,
                              List<Availability> availability, double maxSolveTimeSeconds) {
+        return solve(employees, shifts, availability, List.of(), maxSolveTimeSeconds);
+    }
+
+    public SolveResult solve(List<Employee> employees, List<Shift> shifts,
+                             List<Availability> availability, List<Preference> preferences,
+                             double maxSolveTimeSeconds) {
 
         long startTime = System.currentTimeMillis();
         CpModel model = new CpModel();
@@ -216,6 +224,24 @@ public class SchedulingEngine {
             }
             objective.addTerm(maxLoad, WORKLOAD_IMBALANCE_WEIGHT);
             objective.addTerm(minLoad, -WORKLOAD_IMBALANCE_WEIGHT);
+        }
+
+        // 5. Preference violations (Section 3.4.4's PreferenceViolations term).
+        // Each stored preference has level -2..+2. Assigning employee e to shift s
+        // costs  -level * PREFERENCE_WEIGHT : "avoid"/"strongly avoid" add a
+        // penalty, "prefer"/"strongly prefer" give a reward (negative cost).
+        // Coverage is an equality (assigned + unfilled = needed), so rewards can
+        // never make the solver over-staff a shift - they only influence WHO fills it.
+        // Weight 200 per level unit: well below the unfilled-demand weight (10000),
+        // so coverage always wins, but above the labour-cost proxy (about 40 per
+        // 4h shift), so a preference can actually tip the choice. Tunable; not yet
+        // read from the objective_weight table.
+        final long PREFERENCE_WEIGHT = 200;
+        for (Preference p : preferences) {
+            com.google.ortools.sat.BoolVar var = x.get(key(p.getEmployeeId(), p.getShiftId()));
+            if (var != null && p.getLevel() != 0) {
+                objective.addTerm(var, -p.getLevel() * PREFERENCE_WEIGHT);
+            }
         }
 
         model.minimize(objective);

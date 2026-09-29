@@ -2,12 +2,17 @@ package com.questiu.scheduler.ui;
 
 import com.questiu.scheduler.dao.AvailabilityDao;
 import com.questiu.scheduler.dao.EmployeeDao;
+import com.questiu.scheduler.dao.PreferenceDao;
+import com.questiu.scheduler.dao.PayrollRecordDao;
 import com.questiu.scheduler.dao.PublicHolidayDao;
+import com.questiu.scheduler.dao.ScheduleAssignmentDao;
+import com.questiu.scheduler.dao.ScheduleDao;
 import com.questiu.scheduler.dao.RoleDao;
 import com.questiu.scheduler.dao.ShiftDao;
 import com.questiu.scheduler.model.*;
 import com.questiu.scheduler.payroll.PayrollCalculator;
 import com.questiu.scheduler.solver.ManualScheduleValidator;
+import com.questiu.scheduler.solver.PreferenceScorer;
 import com.questiu.scheduler.solver.SchedulingEngine;
 import javafx.application.Application;
 import javafx.collections.FXCollections;
@@ -52,6 +57,15 @@ public class MainApp extends Application {
     private List<Employee> cachedEmployees;
     private List<Shift> cachedShifts;
     private ManualAssignmentPane manualPane;
+    private final Button saveButton = new Button("Save to Database");
+    private User currentUser;
+
+    // Result of the most recent Generate click (either mode), ready to persist on Save
+    private List<RosterAssignment> lastAssignments;
+    private List<PayrollRecord> lastPayroll;
+    private Map<Integer, Shift> lastShiftsById;
+    private LocalDate lastWeekStart;
+    private String lastScheduleStatus; // 'GENERATED' (Automatic) or 'DRAFT' (Manual)
 
     // --- Employees tab ---
     private final TableView<EmployeeRow> employeeTable = new TableView<>();
@@ -70,6 +84,7 @@ public class MainApp extends Application {
     }
 
     private void showMainTabs(Stage stage, User loggedInUser) {
+        currentUser = loggedInUser;
         TabPane tabs = new TabPane();
         tabs.getTabs().add(new Tab("Roster & Payroll", buildRosterTab()));
         tabs.getTabs().add(new Tab("Employees", buildEmployeesTab(stage)));
@@ -137,8 +152,13 @@ public class MainApp extends Application {
             }
         });
 
+        saveButton.setDisable(true);
+        saveButton.setTooltip(new Tooltip(
+                "Persists the roster shown above into the schedule / schedule_assignment / payroll_record tables."));
+        saveButton.setOnAction(e -> saveToDatabase());
+
         HBox controlsRow = new HBox(15, autoRadio, manualRadio,
-                new Label("Week starting:"), weekStartPicker, generateButton);
+                new Label("Week starting:"), weekStartPicker, generateButton, saveButton);
         controlsRow.setAlignment(Pos.CENTER_LEFT);
 
         statusLabel.setWrapText(true);
@@ -261,8 +281,10 @@ public class MainApp extends Application {
 
                 javafx.application.Platform.runLater(() -> statusLabel.setText("Solving with CP-SAT..."));
                 System.out.println("[UI] Calling SchedulingEngine.solve()...");
+                List<Preference> preferences = new PreferenceDao().findAll();
+                System.out.println("[UI] Loaded " + preferences.size() + " shift preferences");
                 SchedulingEngine.SolveResult result = new SchedulingEngine()
-                        .solve(employees, shifts, availability, 10.0);
+                        .solve(employees, shifts, availability, preferences, 10.0);
                 System.out.println("[UI] Solve returned. Status: " + result.status);
 
                 if (!result.isFeasible()) {
@@ -298,13 +320,21 @@ public class MainApp extends Application {
 
                 double totalNet = payroll.stream().mapToDouble(p -> p.getStatutory().getNetPay().doubleValue()).sum();
                 double totalEmployerCost = payroll.stream().mapToDouble(p -> p.getStatutory().getEmployerTotalCost().doubleValue()).sum();
+                PreferenceScorer.Result prefScore = PreferenceScorer.score(result.assignments, preferences);
 
                 javafx.application.Platform.runLater(() -> {
                     payrollTable.setItems(rows);
                     statusLabel.setText(String.format(
-                            "Status: %s | Solve time: %d ms | Unfilled slots: %d | Week: %s | Holidays this week: %d | Net payroll: RM%.2f | Employer cost: RM%.2f",
-                            result.status, result.solveTimeMillis, result.totalUnfilled, weekStart, holidaysThisWeek,
-                            totalNet, totalEmployerCost));
+                            "Status: %s | Solve time: %d ms | Unfilled slots: %d | Preferences granted: %d, avoided-but-assigned: %d (violation score %d) | Week: %s | Holidays this week: %d | Net payroll: RM%.2f | Employer cost: RM%.2f",
+                            result.status, result.solveTimeMillis, result.totalUnfilled,
+                            prefScore.preferredGranted, prefScore.avoidedImposed, prefScore.violationScore,
+                            weekStart, holidaysThisWeek, totalNet, totalEmployerCost));
+                    lastAssignments = result.assignments;
+                    lastPayroll = payroll;
+                    lastShiftsById = shiftsById;
+                    lastWeekStart = weekStart;
+                    lastScheduleStatus = "GENERATED";
+                    saveButton.setDisable(false);
                 });
                 System.out.println("[UI] Done.");
 
@@ -375,11 +405,71 @@ public class MainApp extends Application {
         long holidaysThisWeek = publicHolidays.stream()
                 .filter(d -> !d.isBefore(weekStart) && d.isBefore(weekStart.plusDays(7)))
                 .count();
+        PreferenceScorer.Result prefScore;
+        try {
+            prefScore = PreferenceScorer.score(assignments, new PreferenceDao().findAll());
+        } catch (Exception ex) {
+            prefScore = PreferenceScorer.score(assignments, List.of());
+        }
         statusLabel.setText(String.format(
-                "Manual mode | Week: %s | Coverage: %.0f%% (%d/%d slots filled) | Warnings: %d | Holidays this week: %d | Net payroll: RM%.2f | Employer cost: RM%.2f",
+                "Manual mode | Week: %s | Coverage: %.0f%% (%d/%d slots filled) | Warnings: %d | Preferences granted: %d, avoided-but-assigned: %d (violation score %d) | Holidays this week: %d | Net payroll: RM%.2f | Employer cost: RM%.2f",
                 weekStart, validation.coveragePercent(),
                 validation.totalSlots - validation.unfilledSlots, validation.totalSlots,
-                validation.violations.size(), holidaysThisWeek, totalNet, totalEmployerCost));
+                validation.violations.size(),
+                prefScore.preferredGranted, prefScore.avoidedImposed, prefScore.violationScore,
+                holidaysThisWeek, totalNet, totalEmployerCost));
+
+        lastAssignments = assignments;
+        lastPayroll = payroll;
+        lastShiftsById = shiftsById;
+        lastWeekStart = weekStart;
+        lastScheduleStatus = "DRAFT";
+        saveButton.setDisable(false);
+    }
+
+    /**
+     * Item 4 (step 4 of the FYP1 plan): persists the most recently generated
+     * roster + payroll into schedule / schedule_assignment / payroll_record.
+     * Deliberately a separate button rather than auto-saving on every
+     * Generate click, so re-running the solver or trying different manual
+     * picks during testing doesn't clutter the schedule table with rows
+     * that were never meant to be kept.
+     */
+    private void saveToDatabase() {
+        if (lastAssignments == null || lastPayroll == null || lastShiftsById == null || lastWeekStart == null) {
+            statusLabel.setText("Nothing to save yet - click 'Generate Roster & Payroll' first.");
+            return;
+        }
+        final List<RosterAssignment> assignmentsToSave = lastAssignments;
+        final List<PayrollRecord> payrollToSave = lastPayroll;
+        final Map<Integer, Shift> shiftsByIdToSave = lastShiftsById;
+        final LocalDate weekStartToSave = lastWeekStart;
+        final String statusToSave = lastScheduleStatus;
+        final Integer userId = currentUser != null ? currentUser.getUserId() : null;
+
+        saveButton.setDisable(true);
+        statusLabel.setText("Saving to database...");
+
+        Thread worker = new Thread(() -> {
+            try {
+                int scheduleId = new ScheduleDao().create(weekStartToSave, statusToSave, null, userId);
+                new ScheduleAssignmentDao().saveAll(scheduleId, assignmentsToSave, shiftsByIdToSave);
+                new PayrollRecordDao().saveAll(scheduleId, payrollToSave);
+                javafx.application.Platform.runLater(() -> {
+                    statusLabel.setText(String.format(
+                            "Saved as schedule #%d (%s, week starting %s): %d assignment(s), %d payroll record(s).",
+                            scheduleId, statusToSave, weekStartToSave, assignmentsToSave.size(), payrollToSave.size()));
+                    saveButton.setDisable(false);
+                });
+            } catch (Exception ex) {
+                javafx.application.Platform.runLater(() -> {
+                    statusLabel.setText("Error saving to database: " + ex.getMessage());
+                    saveButton.setDisable(false);
+                });
+            }
+        });
+        worker.setDaemon(true);
+        worker.start();
     }
 
     // ---------------- Employees tab ----------------
@@ -434,8 +524,24 @@ public class MainApp extends Application {
             }
         });
 
+        TableColumn<EmployeeRow, Void> prefCol = new TableColumn<>("Preferences");
+        prefCol.setCellFactory(col -> new TableCell<>() {
+            private final Button prefButton = new Button("Set Preferences");
+            {
+                prefButton.setOnAction(e -> {
+                    EmployeeRow row = getTableView().getItems().get(getIndex());
+                    PreferenceEditDialog.show(stage, Integer.parseInt(row.getId()), row.getName(), null);
+                });
+            }
+            @Override
+            protected void updateItem(Void item, boolean empty) {
+                super.updateItem(item, empty);
+                setGraphic(empty ? null : prefButton);
+            }
+        });
+
         employeeTable.getColumns().addAll(
-                idCol, nameCol, positionCol, typeCol, rateCol, maxHoursCol, bankCol, availCol);
+                idCol, nameCol, positionCol, typeCol, rateCol, maxHoursCol, bankCol, availCol, prefCol);
     }
 
     private void openRegistrationDialog(Stage owner) {
