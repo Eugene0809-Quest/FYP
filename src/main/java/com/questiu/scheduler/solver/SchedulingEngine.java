@@ -43,6 +43,13 @@ import java.util.stream.Collectors;
  * separately below under its own correct name instead of overloading this
  * one. Left as flat-40h so the code doesn't silently claim a fix it can't
  * actually make.
+ *
+ * CORRECTION: the threshold was previously a flat 40h. For full-time staff
+ * (45h cap) that made the term ACTIVE between 40h and 45h, at 10,000 per hour -
+ * more than an unfilled position (10,000) - so the solver preferred leaving a
+ * shift unfilled to a 44h week. The threshold is now each employee's own
+ * max_hours_week, making the term genuinely inert and restoring coverage as the
+ * dominant objective. See SchedulingEngineCoverageTest.
  */
 public class SchedulingEngine {
 
@@ -165,8 +172,8 @@ public class SchedulingEngine {
         // Track employee hours for cost and overtime minimization
         for (Employee e : employees) {
             // 2. Overtime penalty (lambda_3): KNOWN LIMITATION, permanently a
-            // no-op under Automatic mode - see class javadoc for why this
-            // was deliberately left as-is rather than "fixed" to look correct.
+            // no-op under Automatic mode - see class javadoc. The threshold equals
+            // each employee's own max_hours_week, so it cannot activate.
             IntVar otVar = model.newIntVar(0, 5000, "ot_e" + e.getEmployeeId());
 
             LinearExprBuilder otConstraint = LinearExpr.newBuilder();
@@ -175,7 +182,10 @@ public class SchedulingEngine {
                 otConstraint.addTerm(x.get(key(e.getEmployeeId(), s.getShiftId())), coeff);
             }
             otConstraint.addTerm(otVar, -1);
-            model.addLessOrEqual(otConstraint, 4000);
+            // Threshold = this employee's own hard cap (hundredths of an hour), so the
+            // variable can never activate: it is a deliberate, documented no-op.
+            long otThresholdScaled = Math.round(e.getMaxWeeklyHours().doubleValue() * 100);
+            model.addLessOrEqual(otConstraint, otThresholdScaled);
 
             objective.addTerm(otVar, 100); // Weight for overtime hours
 
