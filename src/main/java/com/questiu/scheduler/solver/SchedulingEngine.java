@@ -21,35 +21,26 @@ import java.util.stream.Collectors;
  * Constraint-based scheduling engine (Section 3.4), implemented with the
  * OR-Tools CP-SAT solver (Section 3.4.5).
  *
- * Objective Z (Section 3.4.4) now wires in all four of its terms: unfilled
+ * Objective Z (Section 3.4.4) wires in all four of its terms: unfilled
  * shifts (dominant), labour cost proxy, workload imbalance (per role group),
  * and preference violations (the employee_preference table, read via the
  * 5-argument solve overload). Preferences are soft: they only break ties
  * between employees who could all legitimately work a shift.
  *
- * KNOWN LIMITATION - Overtime penalty term: this term is a permanent no-op
- * under Automatic mode and was deliberately left that way rather than
- * "fixed" to look more correct. Hard constraint 5 below already forbids
- * anyone from ever being assigned more than their own max_hours_week - so
- * real overtime (hours beyond that cap) can never occur in a CP-SAT-solved
- * schedule; PayrollCalculator's overtimeHours is always 0 for one. Setting
- * this term's threshold to match each employee's own max_hours_week (which
- * would look like the "obvious" fix) would only make an already-inert term
- * exactly as inert, since the threshold and the hard cap would then be
- * identical and the soft variable could never activate either way. Turning
- * it into a genuinely active term would mean redefining what "Overtime
- * penalty" means (e.g. discouraging hours near, rather than over, the cap)
- * - which is really the WorkloadImbalance term's job, now implemented
- * separately below under its own correct name instead of overloading this
- * one. Left as flat-40h so the code doesn't silently claim a fix it can't
- * actually make.
- *
- * CORRECTION: the threshold was previously a flat 40h. For full-time staff
- * (45h cap) that made the term ACTIVE between 40h and 45h, at 10,000 per hour -
- * more than an unfilled position (10,000) - so the solver preferred leaving a
- * shift unfilled to a 44h week. The threshold is now each employee's own
- * max_hours_week, making the term genuinely inert and restoring coverage as the
- * dominant objective. See SchedulingEngineCoverageTest.
+ * KNOWN LIMITATIONS:
+ * - Overtime penalty term: a deliberate, permanent no-op under Automatic mode.
+ *   Hard constraint 5 forbids anyone from being assigned more than their own
+ *   max_hours_week, and this term's threshold equals that same cap, so the soft
+ *   variable can never activate and PayrollCalculator's overtimeHours is always
+ *   0 for a solver-generated roster. (It was previously a flat 40h, which made
+ *   it active between 40h and 45h at 10,000 per hour - more than an unfilled
+ *   position - so the solver left shifts unfilled instead. See
+ *   SchedulingEngineCoverageTest.) Workload spreading is handled separately by
+ *   the WorkloadImbalance term.
+ * - Labour cost term is hours-proportional and does not use hourly_rate, so the
+ *   solver does not yet minimise payroll expenditure (planned for FYP2).
+ * - All objective weights are compile-time constants; the objective_weight table
+ *   is not read yet.
  */
 public class SchedulingEngine {
 
