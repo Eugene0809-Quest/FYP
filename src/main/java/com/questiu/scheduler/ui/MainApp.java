@@ -47,6 +47,8 @@ import java.util.stream.Collectors;
  */
 public class MainApp extends Application {
 
+    private static final String STYLESHEET = "/css/app.css";
+
     // --- Roster & Payroll tab ---
     private final TableView<PayrollRow> payrollTable = new TableView<>();
     private final Label statusLabel = new Label("Ready. Click 'Generate Roster & Payroll' to run.");
@@ -80,7 +82,9 @@ public class MainApp extends Application {
     }
 
     private void showLoginScreen(Stage stage) {
-        stage.setScene(new Scene(LoginView.build(user -> showMainTabs(stage, user)), 400, 320));
+        Scene scene = new Scene(LoginView.build(user -> showMainTabs(stage, user)), 440, 380);
+        scene.getStylesheets().add(getClass().getResource(STYLESHEET).toExternalForm());
+        stage.setScene(scene);
     }
 
     private void showMainTabs(Stage stage, User loggedInUser) {
@@ -97,16 +101,20 @@ public class MainApp extends Application {
         logoutButton.setOnAction(e -> showLoginScreen(stage));
 
         HBox sessionBar = new HBox(15, sessionLabel, logoutButton);
-        sessionBar.setPadding(new Insets(6, 10, 6, 10));
+        sessionBar.setPadding(new Insets(10, 20, 10, 20));
         sessionBar.setAlignment(Pos.CENTER_RIGHT);
+        sessionBar.getStyleClass().add("topbar");
 
         BorderPane root = new BorderPane();
         root.setTop(sessionBar);
         root.setCenter(tabs);
 
-        stage.setScene(new Scene(root, 1100, 650));
+        Scene scene = new Scene(root, 1250, 680);
+        scene.getStylesheets().add(getClass().getResource(STYLESHEET).toExternalForm());
+        stage.setScene(scene);
         stage.setMinWidth(950);
         stage.setMinHeight(500);
+        stage.setWidth(1250);
         loadEmployeesIntoTable();
     }
 
@@ -144,6 +152,7 @@ public class MainApp extends Application {
                 "The Monday of the week you're generating a roster for - matched against the Public Holidays calendar."));
 
         Button generateButton = new Button("Generate Roster & Payroll");
+        generateButton.getStyleClass().add("primary-button");
         generateButton.setOnAction(e -> {
             if (manualRadio.isSelected()) {
                 computeManualPayroll();
@@ -152,6 +161,7 @@ public class MainApp extends Application {
             }
         });
 
+        saveButton.getStyleClass().add("success-button");
         saveButton.setDisable(true);
         saveButton.setTooltip(new Tooltip(
                 "Persists the roster shown above into the schedule / schedule_assignment / payroll_record tables."));
@@ -162,7 +172,7 @@ public class MainApp extends Application {
         controlsRow.setAlignment(Pos.CENTER_LEFT);
 
         statusLabel.setWrapText(true);
-        statusLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #444;");
+        statusLabel.getStyleClass().add("status-label");
         HBox statusRow = new HBox(statusLabel);
         statusRow.setAlignment(Pos.CENTER_LEFT);
         HBox.setHgrow(statusLabel, Priority.ALWAYS);
@@ -476,6 +486,7 @@ public class MainApp extends Application {
 
     private BorderPane buildEmployeesTab(Stage stage) {
         Button registerButton = new Button("Register New Employee");
+        registerButton.getStyleClass().add("primary-button");
         Button refreshButton = new Button("Refresh");
         registerButton.setOnAction(e -> openRegistrationDialog(stage));
         refreshButton.setOnAction(e -> loadEmployeesIntoTable());
@@ -494,20 +505,28 @@ public class MainApp extends Application {
     private void setupEmployeeTableColumns(Stage stage) {
         TableColumn<EmployeeRow, String> idCol = new TableColumn<>("ID");
         idCol.setCellValueFactory(new PropertyValueFactory<>("id"));
+        idCol.setPrefWidth(50);
         TableColumn<EmployeeRow, String> nameCol = new TableColumn<>("Name");
         nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
+        nameCol.setPrefWidth(100);
         TableColumn<EmployeeRow, String> positionCol = new TableColumn<>("Position");
         positionCol.setCellValueFactory(new PropertyValueFactory<>("position"));
+        positionCol.setPrefWidth(120);
         TableColumn<EmployeeRow, String> typeCol = new TableColumn<>("Type");
         typeCol.setCellValueFactory(new PropertyValueFactory<>("type"));
+        typeCol.setPrefWidth(95);
         TableColumn<EmployeeRow, String> rateCol = new TableColumn<>("Rate (RM/hr)");
         rateCol.setCellValueFactory(new PropertyValueFactory<>("rate"));
+        rateCol.setPrefWidth(100);
         TableColumn<EmployeeRow, String> maxHoursCol = new TableColumn<>("Max Hrs/Wk");
         maxHoursCol.setCellValueFactory(new PropertyValueFactory<>("maxHours"));
+        maxHoursCol.setPrefWidth(100);
         TableColumn<EmployeeRow, String> bankCol = new TableColumn<>("Bank Account");
         bankCol.setCellValueFactory(new PropertyValueFactory<>("bankAccount"));
+        bankCol.setPrefWidth(150);
 
         TableColumn<EmployeeRow, Void> availCol = new TableColumn<>("Availability");
+        availCol.setPrefWidth(150);
         availCol.setCellFactory(col -> new TableCell<>() {
             private final Button editButton = new Button("Set Availability");
             {
@@ -525,6 +544,7 @@ public class MainApp extends Application {
         });
 
         TableColumn<EmployeeRow, Void> prefCol = new TableColumn<>("Preferences");
+        prefCol.setPrefWidth(150);
         prefCol.setCellFactory(col -> new TableCell<>() {
             private final Button prefButton = new Button("Set Preferences");
             {

@@ -43,10 +43,12 @@ public class PublicHolidayPane extends BorderPane {
     public PublicHolidayPane() {
         TableColumn<HolidayRow, String> dateCol = new TableColumn<>("Date");
         dateCol.setCellValueFactory(new PropertyValueFactory<>("date"));
+        dateCol.setPrefWidth(110);
         TableColumn<HolidayRow, String> descCol = new TableColumn<>("Description");
         descCol.setCellValueFactory(new PropertyValueFactory<>("description"));
-        descCol.setPrefWidth(280);
+        descCol.setPrefWidth(320);
         TableColumn<HolidayRow, Void> deleteCol = new TableColumn<>("");
+        deleteCol.setPrefWidth(90);
         deleteCol.setCellFactory(col -> new TableCell<>() {
             private final Button deleteButton = new Button("Delete");
             {
@@ -64,9 +66,10 @@ public class PublicHolidayPane extends BorderPane {
         table.getColumns().addAll(dateCol, descCol, deleteCol);
 
         DatePicker datePicker = new DatePicker();
+        datePicker.setPrefWidth(150);
         TextField descField = new TextField();
         descField.setPromptText("Description (e.g. Merdeka Day)");
-        descField.setPrefWidth(220);
+        descField.setPrefWidth(240);
         Button addButton = new Button("Add Holiday");
         addButton.setOnAction(e -> {
             LocalDate date = datePicker.getValue();

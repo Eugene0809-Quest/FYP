@@ -9,6 +9,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextField;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
 import java.util.function.Consumer;
@@ -16,27 +17,37 @@ import java.util.function.Consumer;
 /**
  * Login screen (Section 3.7 - added per supervisor feedback requesting
  * admin login access control). Authenticates against user_account.
+ *
+ * UI polish pass: the form now sits as a white "card" (login-card style
+ * class) centered over a soft gradient background (app-background), rather
+ * than a plain VBox filling the whole window - purely visual, no change to
+ * the authentication logic below.
  */
 public class LoginView {
 
-    public static VBox build(Consumer<User> onLoginSuccess) {
-        Label titleLabel = new Label("SmartShift - Sign In");
-        titleLabel.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
+    public static StackPane build(Consumer<User> onLoginSuccess) {
+        Label titleLabel = new Label("SmartShift");
+        titleLabel.getStyleClass().add("login-title");
+
+        Label subtitleLabel = new Label("Sign in to continue");
+        subtitleLabel.getStyleClass().add("status-label");
 
         TextField usernameField = new TextField();
         usernameField.setPromptText("Username");
-        usernameField.setMaxWidth(220);
+        usernameField.setMaxWidth(240);
 
         PasswordField passwordField = new PasswordField();
         passwordField.setPromptText("Password");
-        passwordField.setMaxWidth(220);
+        passwordField.setMaxWidth(240);
 
         Label errorLabel = new Label();
-        errorLabel.setStyle("-fx-text-fill: red;");
+        errorLabel.getStyleClass().add("error-label");
         errorLabel.setWrapText(true);
         errorLabel.setMaxWidth(240);
 
         Button loginButton = new Button("Log In");
+        loginButton.getStyleClass().add("primary-button");
+        loginButton.setMaxWidth(240);
         loginButton.setDefaultButton(true);
         loginButton.setOnAction(e -> {
             String username = usernameField.getText().trim();
@@ -58,9 +69,15 @@ public class LoginView {
             }
         });
 
-        VBox box = new VBox(12, titleLabel, usernameField, passwordField, loginButton, errorLabel);
-        box.setAlignment(Pos.CENTER);
-        box.setPadding(new Insets(40));
-        return box;
+        VBox card = new VBox(14, titleLabel, subtitleLabel, usernameField, passwordField, loginButton, errorLabel);
+        card.getStyleClass().add("login-card");
+        card.setAlignment(Pos.CENTER);
+        card.setMaxWidth(320);
+        card.setMaxHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+
+        StackPane background = new StackPane(card);
+        background.getStyleClass().add("app-background");
+        background.setPadding(new Insets(20));
+        return background;
     }
 }
