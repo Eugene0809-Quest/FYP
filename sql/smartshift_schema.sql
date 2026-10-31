@@ -1,6 +1,16 @@
 -- ============================================================
 -- SmartShift: Constraint-Based Shift Scheduling and Payroll
--- Optimisation for SMEs — Database Schema (MySQL 8.0, InnoDB)
+-- Optimisation for SMEs - Database Schema (MySQL 8.0, InnoDB)
+--
+-- CONSOLIDATED SCHEMA (17 tables). For a NEW database this single
+-- file is enough: it already includes what migrations 002, 004 and
+-- 005 added (employee registration fields, public_holiday table,
+-- extended payroll_record). Seed data lives in seed_smartshift_n5.sql.
+-- The files in sql/migrations/ are kept only as history for databases
+-- that were built before this consolidation.
+--
+-- Run on an EMPTY server/database only: it uses CREATE TABLE without
+-- DROP, so it will error on a database that already has these tables.
 -- ============================================================
 
 CREATE DATABASE IF NOT EXISTS smartshift
@@ -10,7 +20,7 @@ CREATE DATABASE IF NOT EXISTS smartshift
 USE smartshift;
 
 -- ------------------------------------------------------------
--- 1. USER_ACCOUNT  — manager/admin login
+-- 1. USER_ACCOUNT  - manager/admin login
 -- ------------------------------------------------------------
 CREATE TABLE user_account (
     user_id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -22,7 +32,7 @@ CREATE TABLE user_account (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 2. ROLE  — job roles / skill tags (Barista, Cashier, Cook...)
+-- 2. ROLE  - job roles / skill tags (Kitchen, Front-of-House...)
 -- ------------------------------------------------------------
 CREATE TABLE role (
     role_id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -31,7 +41,7 @@ CREATE TABLE role (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 3. EMPLOYEE
+-- 3. EMPLOYEE  (includes migration 002 fields)
 -- ------------------------------------------------------------
 CREATE TABLE employee (
     employee_id          INT AUTO_INCREMENT PRIMARY KEY,
@@ -50,7 +60,7 @@ CREATE TABLE employee (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 4. AVAILABILITY  — recurring weekly availability per employee
+-- 4. AVAILABILITY  - recurring weekly availability per employee
 -- ------------------------------------------------------------
 CREATE TABLE availability (
     availability_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -65,7 +75,7 @@ CREATE TABLE availability (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 5. SHIFT_DEFINITION  — the shift "slots" a schedule is built from
+-- 5. SHIFT_DEFINITION  - the shift "slots" a schedule is built from
 -- ------------------------------------------------------------
 CREATE TABLE shift_definition (
     shift_id        INT AUTO_INCREMENT PRIMARY KEY,
@@ -81,7 +91,7 @@ CREATE TABLE shift_definition (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 6. EMPLOYEE_PREFERENCE  — soft-constraint input (preferred shifts)
+-- 6. EMPLOYEE_PREFERENCE  - soft-constraint input (preferred shifts)
 -- ------------------------------------------------------------
 CREATE TABLE employee_preference (
     preference_id     INT AUTO_INCREMENT PRIMARY KEY,
@@ -98,7 +108,7 @@ CREATE TABLE employee_preference (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 7. CONSTRAINT_RULE  — configurable hard/soft rules & weights
+-- 7. CONSTRAINT_RULE  - configurable hard/soft rules & weights
 -- ------------------------------------------------------------
 CREATE TABLE constraint_rule (
     rule_id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -110,7 +120,7 @@ CREATE TABLE constraint_rule (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 8. SCHEDULE  — one generated weekly roster (a "run" of the solver)
+-- 8. SCHEDULE  - one generated weekly roster (a "run" of the solver)
 -- ------------------------------------------------------------
 CREATE TABLE schedule (
     schedule_id       INT AUTO_INCREMENT PRIMARY KEY,
@@ -125,7 +135,7 @@ CREATE TABLE schedule (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 9. SCHEDULE_ASSIGNMENT  — solver output: employee <-> shift, per schedule
+-- 9. SCHEDULE_ASSIGNMENT  - solver output: employee <-> shift
 -- ------------------------------------------------------------
 CREATE TABLE schedule_assignment (
     assignment_id     INT AUTO_INCREMENT PRIMARY KEY,
@@ -146,7 +156,7 @@ CREATE TABLE schedule_assignment (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 10. CONSTRAINT_VIOLATION  — logged whenever a rule is broken/relaxed
+-- 10. CONSTRAINT_VIOLATION  - logged whenever a rule is broken/relaxed
 -- ------------------------------------------------------------
 CREATE TABLE constraint_violation (
     violation_id      INT AUTO_INCREMENT PRIMARY KEY,
@@ -171,18 +181,31 @@ CREATE TABLE constraint_violation (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 11. PAYROLL_RECORD  — computed directly from schedule_assignment
+-- 11. PAYROLL_RECORD  - computed from schedule_assignment
+--     (includes migration 005: holiday pay, EPF/SOCSO/EIS, net pay,
+--      employer total cost; total_pay now includes holiday_pay)
 -- ------------------------------------------------------------
 CREATE TABLE payroll_record (
-    payroll_id        INT AUTO_INCREMENT PRIMARY KEY,
-    schedule_id       INT NOT NULL,
-    employee_id       INT NOT NULL,
-    regular_hours     DECIMAL(6,2) NOT NULL DEFAULT 0,
-    overtime_hours    DECIMAL(6,2) NOT NULL DEFAULT 0,
-    regular_pay       DECIMAL(10,2) NOT NULL DEFAULT 0,
-    overtime_pay      DECIMAL(10,2) NOT NULL DEFAULT 0,
-    total_pay         DECIMAL(10,2) GENERATED ALWAYS AS (regular_pay + overtime_pay) STORED,
-    computed_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    payroll_id            INT AUTO_INCREMENT PRIMARY KEY,
+    schedule_id           INT NOT NULL,
+    employee_id           INT NOT NULL,
+    regular_hours         DECIMAL(6,2)  NOT NULL DEFAULT 0,
+    overtime_hours        DECIMAL(6,2)  NOT NULL DEFAULT 0,
+    holiday_hours         DECIMAL(6,2)  NOT NULL DEFAULT 0,
+    regular_pay           DECIMAL(10,2) NOT NULL DEFAULT 0,
+    overtime_pay          DECIMAL(10,2) NOT NULL DEFAULT 0,
+    holiday_pay           DECIMAL(10,2) NOT NULL DEFAULT 0,
+    total_pay             DECIMAL(10,2)
+        GENERATED ALWAYS AS (regular_pay + overtime_pay + holiday_pay) STORED,
+    employee_epf          DECIMAL(10,2) NOT NULL DEFAULT 0,
+    employer_epf          DECIMAL(10,2) NOT NULL DEFAULT 0,
+    employee_socso        DECIMAL(10,2) NOT NULL DEFAULT 0,
+    employer_socso        DECIMAL(10,2) NOT NULL DEFAULT 0,
+    employee_eis          DECIMAL(10,2) NOT NULL DEFAULT 0,
+    employer_eis          DECIMAL(10,2) NOT NULL DEFAULT 0,
+    net_pay               DECIMAL(10,2) NOT NULL DEFAULT 0,
+    employer_total_cost   DECIMAL(10,2) NOT NULL DEFAULT 0,
+    computed_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_payroll_schedule
         FOREIGN KEY (schedule_id) REFERENCES schedule(schedule_id)
         ON UPDATE CASCADE ON DELETE CASCADE,
@@ -193,9 +216,8 @@ CREATE TABLE payroll_record (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 12. OBJECTIVE_WEIGHT — configurable lambda weights for the weighted
---     objective Z (Section 3.4.4), one row per schedule run so a manager
---     can retune the trade-off before regenerating a roster.
+-- 12. OBJECTIVE_WEIGHT - configurable lambda weights for the weighted
+--     objective Z (Section 3.4.4), one row per schedule run.
 -- ------------------------------------------------------------
 CREATE TABLE objective_weight (
     schedule_id       INT PRIMARY KEY,
@@ -209,9 +231,8 @@ CREATE TABLE objective_weight (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 13. BASELINE_SCHEDULE — rule-based/manual baseline roster, persisted
---     alongside the CP-SAT result so FYP2's RQ3 comparison
---     (Section 3.10) has a documented baseline to evaluate against.
+-- 13. BASELINE_SCHEDULE - rule-based/manual baseline roster, stored
+--     beside the CP-SAT result for the FYP2 RQ3 comparison.
 -- ------------------------------------------------------------
 CREATE TABLE baseline_schedule (
     baseline_id     INT AUTO_INCREMENT PRIMARY KEY,
@@ -231,7 +252,7 @@ CREATE TABLE baseline_schedule (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 14. COMPLIANCE_REPORT  — one summary row per schedule run
+-- 14. COMPLIANCE_REPORT  - one summary row per schedule run
 -- ------------------------------------------------------------
 CREATE TABLE compliance_report (
     report_id           INT AUTO_INCREMENT PRIMARY KEY,
@@ -247,7 +268,7 @@ CREATE TABLE compliance_report (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 15. EVALUATION_METRIC  — runtime/quality metrics for FYP2 testing
+-- 15. EVALUATION_METRIC  - runtime/quality metrics for FYP2 testing
 -- ------------------------------------------------------------
 CREATE TABLE evaluation_metric (
     metric_id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -261,7 +282,7 @@ CREATE TABLE evaluation_metric (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 16. AUDIT_LOG  — traceability: who changed what, when
+-- 16. AUDIT_LOG  - traceability: who changed what, when
 -- ------------------------------------------------------------
 CREATE TABLE audit_log (
     log_id            INT AUTO_INCREMENT PRIMARY KEY,
@@ -276,15 +297,13 @@ CREATE TABLE audit_log (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 17. PUBLIC_HOLIDAY — gazetted public holidays (supervisor item #4).
---     Checked against each shift's actual calendar date (Shift.actualDate,
---     Java side) to apply the 2x public-holiday pay premium in
---     PayrollCalculator - see Section 3.5.
+-- 17. PUBLIC_HOLIDAY  (migration 004) - dates paid at the holiday
+--     rate by the payroll calculator. No foreign keys.
 -- ------------------------------------------------------------
 CREATE TABLE public_holiday (
-    holiday_id    INT AUTO_INCREMENT PRIMARY KEY,
-    holiday_date  DATE NOT NULL UNIQUE,
-    description   VARCHAR(255) NOT NULL
+    holiday_id      INT AUTO_INCREMENT PRIMARY KEY,
+    holiday_date    DATE NOT NULL UNIQUE,
+    description     VARCHAR(255) NOT NULL
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------

@@ -96,3 +96,24 @@ INSERT INTO user_account (username, password_hash, full_name, role) VALUES
 ('admin', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'Fong U Kin', 'ADMIN');
 
 SELECT @sched AS schedule_id;
+
+-- 2026 Malaysia public holidays (previously migration 006).
+-- Dates must be re-verified against the official Prime Minister's Department
+-- schedule before relying on them; Islamic-calendar dates can still shift.
+-- This is one national list: per-state variation is not modelled.
+INSERT IGNORE INTO public_holiday (holiday_date, description) VALUES
+('2026-01-01', 'New Year''s Day'),
+('2026-02-17', 'Chinese New Year (Day 1)'),
+('2026-02-18', 'Chinese New Year (Day 2)'),
+('2026-03-21', 'Hari Raya Aidilfitri (Day 1)'),
+('2026-03-22', 'Hari Raya Aidilfitri (Day 2)'),
+('2026-05-01', 'Labour Day'),
+('2026-05-27', 'Hari Raya Haji'),
+('2026-05-31', 'Wesak Day'),
+('2026-06-01', 'Yang di-Pertuan Agong''s Birthday'),
+('2026-06-17', 'Awal Muharram'),
+('2026-08-25', 'Maulidur Rasul'),
+('2026-08-31', 'Merdeka Day'),
+('2026-09-16', 'Malaysia Day'),
+('2026-11-08', 'Deepavali'),
+('2026-12-25', 'Christmas Day');
