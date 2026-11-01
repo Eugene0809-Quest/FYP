@@ -2,12 +2,12 @@
 -- SmartShift: Constraint-Based Shift Scheduling and Payroll
 -- Optimisation for SMEs - Database Schema (MySQL 8.0, InnoDB)
 --
--- CONSOLIDATED SCHEMA (19 tables). For a NEW database this single
--- file is enough: it already includes what migrations 002, 004, 005
--- and 007 added (employee registration fields, public_holiday table,
--- extended payroll_record, company profile, employee statutory
--- numbers, staff login link, leave requests). Seed data lives in
--- seed_smartshift_n5.sql.
+-- CONSOLIDATED SCHEMA (20 tables). For a NEW database this single
+-- file is enough: it already includes what migrations 002, 004, 005,
+-- 007 and 008 added (employee registration fields, public_holiday
+-- table, extended payroll_record, company profile, employee statutory
+-- numbers, staff login link, leave requests, job positions). Seed data
+-- lives in seed_smartshift_n5.sql.
 -- The files in sql/migrations/ are kept only as history for databases
 -- that were built before this consolidation.
 --
@@ -47,11 +47,33 @@ CREATE TABLE role (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
+-- 20. JOB_POSITION  (migration 008) - job titles inside a department
+--     (role). Placed here, before employee, because employee has a
+--     composite foreign key to it. 'role' stays the department the
+--     solver matches on; a senior position can cover any normal shift
+--     of its own department.
+-- ------------------------------------------------------------
+CREATE TABLE job_position (
+    job_position_id  INT AUTO_INCREMENT PRIMARY KEY,
+    role_id          INT NOT NULL,
+    position_name    VARCHAR(50) NOT NULL,
+    rank_level       TINYINT NOT NULL DEFAULT 1,
+    description      VARCHAR(255),
+    CONSTRAINT uq_position_name UNIQUE (role_id, position_name),
+    CONSTRAINT uq_position_role_id UNIQUE (role_id, job_position_id),
+    CONSTRAINT chk_position_rank CHECK (rank_level BETWEEN 1 AND 5),
+    CONSTRAINT fk_position_role
+        FOREIGN KEY (role_id) REFERENCES role(role_id)
+        ON UPDATE CASCADE ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+-- ------------------------------------------------------------
 -- 3. EMPLOYEE  (includes migration 002 fields)
 -- ------------------------------------------------------------
 CREATE TABLE employee (
     employee_id          INT AUTO_INCREMENT PRIMARY KEY,
     role_id              INT NOT NULL,
+    job_position_id      INT NULL,
     full_name            VARCHAR(100) NOT NULL,
     ic_number            VARCHAR(20) NULL,
     contact_number       VARCHAR(20),
@@ -68,7 +90,12 @@ CREATE TABLE employee (
     CONSTRAINT uq_employee_ic UNIQUE (ic_number),
     CONSTRAINT fk_employee_role
         FOREIGN KEY (role_id) REFERENCES role(role_id)
-        ON UPDATE CASCADE ON DELETE RESTRICT
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    -- A position must belong to the SAME department as the employee's
+    -- role. job_position_id may be empty (no position assigned yet).
+    CONSTRAINT fk_employee_position
+        FOREIGN KEY (role_id, job_position_id)
+        REFERENCES job_position (role_id, job_position_id)
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
