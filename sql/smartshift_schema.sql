@@ -2,10 +2,12 @@
 -- SmartShift: Constraint-Based Shift Scheduling and Payroll
 -- Optimisation for SMEs - Database Schema (MySQL 8.0, InnoDB)
 --
--- CONSOLIDATED SCHEMA (17 tables). For a NEW database this single
--- file is enough: it already includes what migrations 002, 004 and
--- 005 added (employee registration fields, public_holiday table,
--- extended payroll_record). Seed data lives in seed_smartshift_n5.sql.
+-- CONSOLIDATED SCHEMA (19 tables). For a NEW database this single
+-- file is enough: it already includes what migrations 002, 004, 005
+-- and 007 added (employee registration fields, public_holiday table,
+-- extended payroll_record, company profile, employee statutory
+-- numbers, staff login link, leave requests). Seed data lives in
+-- seed_smartshift_n5.sql.
 -- The files in sql/migrations/ are kept only as history for databases
 -- that were built before this consolidation.
 --
@@ -27,8 +29,12 @@ CREATE TABLE user_account (
     username        VARCHAR(50)  NOT NULL UNIQUE,
     password_hash   VARCHAR(255) NOT NULL,
     full_name       VARCHAR(100) NOT NULL,
-    role            ENUM('MANAGER','ADMIN') NOT NULL DEFAULT 'MANAGER',
-    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    role            ENUM('MANAGER','ADMIN','STAFF') NOT NULL DEFAULT 'MANAGER',
+    employee_id     INT NULL,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_user_employee UNIQUE (employee_id)
+    -- fk_user_employee and chk_staff_has_employee are added after the
+    -- employee table exists (see "Cross-table rules" near the end).
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
@@ -47,13 +53,19 @@ CREATE TABLE employee (
     employee_id          INT AUTO_INCREMENT PRIMARY KEY,
     role_id              INT NOT NULL,
     full_name            VARCHAR(100) NOT NULL,
+    ic_number            VARCHAR(20) NULL,
     contact_number       VARCHAR(20),
     bank_account_number  VARCHAR(30),
+    epf_number           VARCHAR(20) NULL,
+    socso_number         VARCHAR(20) NULL,
+    eis_number           VARCHAR(20) NULL,
     employment_type      ENUM('FULL_TIME','PART_TIME') NOT NULL DEFAULT 'FULL_TIME',
+    date_joined          DATE NULL,
     hourly_rate          DECIMAL(8,2) NOT NULL CHECK (hourly_rate > 0),
     max_hours_week       DECIMAL(5,2) NOT NULL DEFAULT 45.00,
     is_active            BOOLEAN NOT NULL DEFAULT TRUE,
     created_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_employee_ic UNIQUE (ic_number),
     CONSTRAINT fk_employee_role
         FOREIGN KEY (role_id) REFERENCES role(role_id)
         ON UPDATE CASCADE ON DELETE RESTRICT
@@ -307,6 +319,65 @@ CREATE TABLE public_holiday (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
+-- 18. COMPANY  (migration 007) - exactly one row (single-outlet scope).
+--     The CHECK forces company_id = 1, so a second company cannot be
+--     inserted by mistake.
+-- ------------------------------------------------------------
+CREATE TABLE company (
+    company_id        TINYINT UNSIGNED NOT NULL DEFAULT 1 PRIMARY KEY,
+    company_name      VARCHAR(120) NOT NULL,
+    registration_no   VARCHAR(30),
+    business_type     VARCHAR(60),
+    address           VARCHAR(255),
+    contact_number    VARCHAR(20),
+    email             VARCHAR(100),
+    opening_time      TIME,
+    closing_time      TIME,
+    description       VARCHAR(500),
+    created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_company_single_row CHECK (company_id = 1)
+) ENGINE=InnoDB;
+
+-- ------------------------------------------------------------
+-- 19. LEAVE_REQUEST  (migration 007) - staff ask for dated time off;
+--     an admin approves or rejects. Approved leave will be read by the
+--     solver as "unavailable on these dates".
+-- ------------------------------------------------------------
+CREATE TABLE leave_request (
+    leave_id        INT AUTO_INCREMENT PRIMARY KEY,
+    employee_id     INT NOT NULL,
+    leave_type      ENUM('ANNUAL','SICK','EMERGENCY','UNPAID','OTHER') NOT NULL,
+    start_date      DATE NOT NULL,
+    end_date        DATE NOT NULL,
+    reason          VARCHAR(255),
+    status          ENUM('PENDING','APPROVED','REJECTED','CANCELLED') NOT NULL DEFAULT 'PENDING',
+    requested_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    decided_by      INT NULL,
+    decided_at      DATETIME NULL,
+    admin_note      VARCHAR(255),
+    CONSTRAINT fk_leave_employee
+        FOREIGN KEY (employee_id) REFERENCES employee(employee_id)
+        ON UPDATE CASCADE ON DELETE CASCADE,
+    CONSTRAINT fk_leave_decider
+        FOREIGN KEY (decided_by) REFERENCES user_account(user_id)
+        ON UPDATE CASCADE ON DELETE SET NULL,
+    CONSTRAINT chk_leave_dates CHECK (end_date >= start_date)
+) ENGINE=InnoDB;
+
+-- ------------------------------------------------------------
+-- Cross-table rules: user_account is created before employee, so the
+-- link from a login to an employee is added here. MySQL forbids CHECK
+-- constraints on columns that have ON DELETE / ON UPDATE actions, so
+-- this foreign key uses the default RESTRICT behaviour (employees are
+-- deactivated, not deleted).
+-- ------------------------------------------------------------
+ALTER TABLE user_account
+    ADD CONSTRAINT fk_user_employee
+        FOREIGN KEY (employee_id) REFERENCES employee(employee_id),
+    ADD CONSTRAINT chk_staff_has_employee
+        CHECK (role <> 'STAFF' OR employee_id IS NOT NULL);
+
+-- ------------------------------------------------------------
 -- Helpful indexes for solver queries
 -- ------------------------------------------------------------
 CREATE INDEX idx_availability_employee_day ON availability(employee_id, day_of_week);
@@ -314,3 +385,5 @@ CREATE INDEX idx_shift_day ON shift_definition(day_of_week);
 CREATE INDEX idx_assignment_schedule ON schedule_assignment(schedule_id);
 CREATE INDEX idx_payroll_schedule ON payroll_record(schedule_id);
 CREATE INDEX idx_baseline_schedule ON baseline_schedule(schedule_id);
+CREATE INDEX idx_leave_employee_status ON leave_request(employee_id, status);
+CREATE INDEX idx_leave_dates ON leave_request(start_date, end_date);
