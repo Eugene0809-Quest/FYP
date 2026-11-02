@@ -1,8 +1,10 @@
 package com.questiu.scheduler.ui;
 
 import com.questiu.scheduler.dao.EmployeeDao;
+import com.questiu.scheduler.dao.JobPositionDao;
 import com.questiu.scheduler.model.Employee;
 import com.questiu.scheduler.model.EmploymentType;
+import com.questiu.scheduler.model.JobPosition;
 import com.questiu.scheduler.model.Role;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
@@ -14,12 +16,21 @@ import javafx.stage.Modality;
 import javafx.stage.Stage;
 
 import java.math.BigDecimal;
+import java.sql.SQLIntegrityConstraintViolationException;
+import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Modal "Register New Employee" form (Section 3.7 - data-entry screen).
  * Added per supervisor feedback on the FYP1 checkpoint: registration should
  * capture name, bank account, full/part-time (-> max hours), and position.
+ *
+ * FYP2: also captures the job position (the list changes with the chosen
+ * department, so a Head Chef can never be filed under Front-of-House),
+ * the IC / EPF / SOCSO / EIS numbers and the joining date, following the
+ * lecturer's feedback on the prototype.
  */
 public class EmployeeRegistrationDialog {
 
@@ -34,9 +45,41 @@ public class EmployeeRegistrationDialog {
         grid.setVgap(10);
         grid.setPadding(new Insets(15));
 
+        List<JobPosition> loaded;
+        try {
+            loaded = new JobPositionDao().findAll();
+        } catch (Exception ex) {
+            loaded = new ArrayList<>();
+        }
+        final List<JobPosition> positions = loaded;
+
         TextField nameField = new TextField();
         ComboBox<Role> roleBox = new ComboBox<>(FXCollections.observableArrayList(roles));
         if (!roles.isEmpty()) roleBox.getSelectionModel().selectFirst();
+
+        ComboBox<JobPosition> positionBox = new ComboBox<>();
+        Runnable refreshPositions = () -> {
+            Role selected = roleBox.getValue();
+            if (selected == null) {
+                positionBox.getItems().clear();
+                return;
+            }
+            List<JobPosition> forDepartment = positions.stream()
+                    .filter(p -> p.getRoleId() == selected.getRoleId())
+                    .collect(Collectors.toList());
+            positionBox.setItems(FXCollections.observableArrayList(forDepartment));
+            if (!forDepartment.isEmpty()) positionBox.getSelectionModel().selectFirst();
+        };
+        roleBox.valueProperty().addListener((obs, oldV, newV) -> refreshPositions.run());
+        refreshPositions.run();
+
+        TextField icField = new TextField();
+        icField.setPromptText("Test data only - use an invented number");
+        TextField epfField = new TextField();
+        TextField socsoField = new TextField();
+        TextField eisField = new TextField();
+        DatePicker joinedPicker = new DatePicker(LocalDate.now());
+
         TextField bankField = new TextField();
         ComboBox<EmploymentType> typeBox = new ComboBox<>(
                 FXCollections.observableArrayList(EmploymentType.values()));
@@ -52,11 +95,17 @@ public class EmployeeRegistrationDialog {
         Label errorLabel = new Label();
         errorLabel.setStyle("-fx-text-fill: red;");
         errorLabel.setWrapText(true);
-        errorLabel.setMaxWidth(220);
+        errorLabel.setMaxWidth(280);
 
         int r = 0;
         grid.addRow(r++, new Label("Full Name:"), nameField);
-        grid.addRow(r++, new Label("Position / Role:"), roleBox);
+        grid.addRow(r++, new Label("Department:"), roleBox);
+        grid.addRow(r++, new Label("Job Position:"), positionBox);
+        grid.addRow(r++, new Label("IC Number:"), icField);
+        grid.addRow(r++, new Label("EPF Number:"), epfField);
+        grid.addRow(r++, new Label("SOCSO Number:"), socsoField);
+        grid.addRow(r++, new Label("EIS Number:"), eisField);
+        grid.addRow(r++, new Label("Date Joined:"), joinedPicker);
         grid.addRow(r++, new Label("Bank Account No.:"), bankField);
         grid.addRow(r++, new Label("Employment Type:"), typeBox);
         grid.addRow(r++, new Label("Hourly Rate (RM):"), rateField);
@@ -70,11 +119,21 @@ public class EmployeeRegistrationDialog {
             try {
                 String name = nameField.getText().trim();
                 Role role = roleBox.getValue();
+                JobPosition position = positionBox.getValue();
+                String ic = icField.getText().trim();
                 String bank = bankField.getText().trim();
                 EmploymentType type = typeBox.getValue();
 
                 if (name.isEmpty() || role == null || type == null) {
-                    errorLabel.setText("Full name, position, and employment type are required.");
+                    errorLabel.setText("Full name, department, and employment type are required.");
+                    return;
+                }
+                if (position == null && !positionBox.getItems().isEmpty()) {
+                    errorLabel.setText("Please choose a job position.");
+                    return;
+                }
+                if (ic.isEmpty()) {
+                    errorLabel.setText("IC number is required (use an invented number for test data).");
                     return;
                 }
 
@@ -96,10 +155,18 @@ public class EmployeeRegistrationDialog {
                     return;
                 }
 
-                Employee newEmp = new Employee(0, name, role.getRoleId(), rate, maxHours, true, bank, type);
+                Employee newEmp = new Employee(0, name, role.getRoleId(), rate, maxHours, true, bank, type,
+                        position == null ? null : position.getJobPositionId(),
+                        ic, blankToNull(epfField.getText()), blankToNull(socsoField.getText()),
+                        blankToNull(eisField.getText()), joinedPicker.getValue());
                 new EmployeeDao().register(newEmp);
                 dialog.close();
                 if (onSaved != null) onSaved.run();
+            } catch (SQLIntegrityConstraintViolationException dup) {
+                String msg = dup.getMessage() == null ? "" : dup.getMessage();
+                errorLabel.setText(msg.contains("uq_employee_ic") || msg.contains("ic_number")
+                        ? "That IC number is already registered to another employee."
+                        : "Error saving: " + msg);
             } catch (Exception ex) {
                 errorLabel.setText("Error saving: " + ex.getMessage());
             }
@@ -108,7 +175,12 @@ public class EmployeeRegistrationDialog {
         HBox buttons = new HBox(10, saveButton, cancelButton);
         grid.add(buttons, 1, r);
 
-        dialog.setScene(new Scene(grid, 380, 340));
+        dialog.setScene(new Scene(grid, 460, 600));
         dialog.showAndWait();
+    }
+
+    private static String blankToNull(String value) {
+        String trimmed = value == null ? "" : value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

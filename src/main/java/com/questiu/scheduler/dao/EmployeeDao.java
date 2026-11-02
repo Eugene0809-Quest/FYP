@@ -9,6 +9,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Types;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -46,21 +47,35 @@ public class EmployeeDao {
     /**
      * Registers a new employee (Section 3.7 - data-entry screen, added per
      * supervisor feedback) and returns the generated employee_id.
-     * (The new FYP2 fields are not written yet - the registration form
-     * is extended in the next step.)
+     * FYP2: also saves the job position and the IC / EPF / SOCSO / EIS
+     * numbers and joining date. The database refuses a job position that
+     * belongs to a different department than the employee's role, and a
+     * duplicate IC number.
      */
     public int register(Employee emp) throws SQLException {
-        String sql = "INSERT INTO employee (role_id, full_name, bank_account_number, employment_type, " +
-                     "hourly_rate, max_hours_week, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO employee (role_id, job_position_id, full_name, ic_number, " +
+                     "bank_account_number, epf_number, socso_number, eis_number, employment_type, " +
+                     "date_joined, hourly_rate, max_hours_week, is_active) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try (Connection conn = DatabaseConnection.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
             ps.setInt(1, emp.getRoleId());
-            ps.setString(2, emp.getFullName());
-            ps.setString(3, emp.getBankAccountNumber());
-            ps.setString(4, emp.getEmploymentType().name());
-            ps.setBigDecimal(5, emp.getHourlyRate());
-            ps.setBigDecimal(6, emp.getMaxWeeklyHours());
-            ps.setBoolean(7, emp.isActive());
+            ps.setObject(2, emp.getJobPositionId(), Types.INTEGER);
+            ps.setString(3, emp.getFullName());
+            ps.setString(4, emp.getIcNumber());
+            ps.setString(5, emp.getBankAccountNumber());
+            ps.setString(6, emp.getEpfNumber());
+            ps.setString(7, emp.getSocsoNumber());
+            ps.setString(8, emp.getEisNumber());
+            ps.setString(9, emp.getEmploymentType().name());
+            if (emp.getDateJoined() == null) {
+                ps.setNull(10, Types.DATE);
+            } else {
+                ps.setDate(10, Date.valueOf(emp.getDateJoined()));
+            }
+            ps.setBigDecimal(11, emp.getHourlyRate());
+            ps.setBigDecimal(12, emp.getMaxWeeklyHours());
+            ps.setBoolean(13, emp.isActive());
             ps.executeUpdate();
             try (ResultSet keys = ps.getGeneratedKeys()) {
                 if (keys.next()) return keys.getInt(1);
