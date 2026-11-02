@@ -61,6 +61,7 @@ public class MainApp extends Application {
     private ManualAssignmentPane manualPane;
     private final Button saveButton = new Button("Save to Database");
     private User currentUser;
+    private Company company;
 
     // Result of the most recent Generate click (either mode), ready to persist on Save
     private List<RosterAssignment> lastAssignments;
@@ -74,9 +75,16 @@ public class MainApp extends Application {
     private final Label employeeStatusLabel = new Label("");
     private Map<Integer, String> roleNamesById = Map.of();
 
-    @Override
+       @Override
     public void start(Stage stage) {
-        stage.setTitle("Constraint-Based Shift Scheduling and Payroll Optimisation (FYP1 Prototype)");
+        try {
+            company = new com.questiu.scheduler.dao.CompanyDao().find();
+        } catch (Exception ex) {
+            company = null; // keep the login screen usable if the database is unreachable
+        }
+        stage.setTitle(company != null
+                ? company.getCompanyName() + " - SmartShift: Shift Scheduling and Payroll"
+                : "SmartShift: Shift Scheduling and Payroll");
         showLoginScreen(stage);
         stage.show();
     }
@@ -86,8 +94,20 @@ public class MainApp extends Application {
         scene.getStylesheets().add(getClass().getResource(STYLESHEET).toExternalForm());
         stage.setScene(scene);
     }
+        private void showStaffScreen(Stage stage, User staffUser) {
+        currentUser = staffUser;
+        Scene scene = new Scene(StaffHomeView.build(staffUser, company, () -> showLoginScreen(stage)), 1000, 640);
+        scene.getStylesheets().add(getClass().getResource(STYLESHEET).toExternalForm());
+        stage.setScene(scene);
+        stage.setMinWidth(800);
+        stage.setMinHeight(500);
+    }
 
-    private void showMainTabs(Stage stage, User loggedInUser) {
+        private void showMainTabs(Stage stage, User loggedInUser) {
+        if (loggedInUser.isStaff()) {
+            showStaffScreen(stage, loggedInUser);
+            return;
+        }
         currentUser = loggedInUser;
         TabPane tabs = new TabPane();
         tabs.getTabs().add(new Tab("Roster & Payroll", buildRosterTab()));
@@ -100,9 +120,14 @@ public class MainApp extends Application {
         Button logoutButton = new Button("Log Out");
         logoutButton.setOnAction(e -> showLoginScreen(stage));
 
-        HBox sessionBar = new HBox(15, sessionLabel, logoutButton);
+        Label companyLabel = new Label(company != null ? company.getCompanyName() : "SmartShift");
+        companyLabel.setStyle("-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: white;");
+        javafx.scene.layout.Region spacer = new javafx.scene.layout.Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        HBox sessionBar = new HBox(15, companyLabel, spacer, sessionLabel, logoutButton);
         sessionBar.setPadding(new Insets(10, 20, 10, 20));
-        sessionBar.setAlignment(Pos.CENTER_RIGHT);
+        sessionBar.setAlignment(Pos.CENTER_LEFT);
         sessionBar.getStyleClass().add("topbar");
 
         BorderPane root = new BorderPane();
@@ -148,6 +173,7 @@ public class MainApp extends Application {
         });
 
         weekStartPicker.setPrefWidth(130);
+        weekStartPicker.setConverter(DateFormats.dayMonthYear());
         weekStartPicker.setTooltip(new Tooltip(
                 "The Monday of the week you're generating a roster for - matched against the Public Holidays calendar."));
 

@@ -32,6 +32,21 @@ public class EmployeeDao {
         return query(sql);
     }
 
+    /** One employee by id, or null if there is none - used by the staff "My Profile" screen. */
+    public Employee findById(int employeeId) throws SQLException {
+        String sql = "SELECT " + SELECT_COLUMNS + " FROM employee WHERE employee_id = ?";
+        try (Connection conn = DatabaseConnection.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, employeeId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return mapRow(rs);
+                }
+            }
+        }
+        return null;
+    }
+
     private List<Employee> query(String sql) throws SQLException {
         List<Employee> employees = new ArrayList<>();
         try (Connection conn = DatabaseConnection.getConnection();
