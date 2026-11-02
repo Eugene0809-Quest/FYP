@@ -4,10 +4,12 @@ import com.questiu.scheduler.model.Employee;
 import com.questiu.scheduler.model.EmploymentType;
 
 import java.sql.Connection;
+import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -15,7 +17,8 @@ public class EmployeeDao {
 
     private static final String SELECT_COLUMNS =
             "employee_id, full_name, role_id, hourly_rate, max_hours_week, is_active, " +
-            "bank_account_number, employment_type";
+            "bank_account_number, employment_type, " +
+            "job_position_id, ic_number, epf_number, socso_number, eis_number, date_joined";
 
     public List<Employee> findAllActive() throws SQLException {
         String sql = "SELECT " + SELECT_COLUMNS + " FROM employee WHERE is_active = TRUE";
@@ -43,6 +46,8 @@ public class EmployeeDao {
     /**
      * Registers a new employee (Section 3.7 - data-entry screen, added per
      * supervisor feedback) and returns the generated employee_id.
+     * (The new FYP2 fields are not written yet - the registration form
+     * is extended in the next step.)
      */
     public int register(Employee emp) throws SQLException {
         String sql = "INSERT INTO employee (role_id, full_name, bank_account_number, employment_type, " +
@@ -65,6 +70,10 @@ public class EmployeeDao {
     }
 
     private Employee mapRow(ResultSet rs) throws SQLException {
+        int positionValue = rs.getInt("job_position_id");
+        Integer jobPositionId = rs.wasNull() ? null : positionValue;
+        Date joined = rs.getDate("date_joined");
+        LocalDate dateJoined = joined == null ? null : joined.toLocalDate();
         return new Employee(
                 rs.getInt("employee_id"),
                 rs.getString("full_name"),
@@ -73,7 +82,13 @@ public class EmployeeDao {
                 rs.getBigDecimal("max_hours_week"),
                 rs.getBoolean("is_active"),
                 rs.getString("bank_account_number"),
-                EmploymentType.valueOf(rs.getString("employment_type"))
+                EmploymentType.valueOf(rs.getString("employment_type")),
+                jobPositionId,
+                rs.getString("ic_number"),
+                rs.getString("epf_number"),
+                rs.getString("socso_number"),
+                rs.getString("eis_number"),
+                dateJoined
         );
     }
 }

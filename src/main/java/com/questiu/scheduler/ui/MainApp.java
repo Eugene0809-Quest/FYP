@@ -502,31 +502,30 @@ public class MainApp extends Application {
         return root;
     }
 
+       private static TableColumn<EmployeeRow, String> textColumn(String title, String property, double width) {
+        TableColumn<EmployeeRow, String> col = new TableColumn<>(title);
+        col.setCellValueFactory(new PropertyValueFactory<>(property));
+        col.setPrefWidth(width);
+        return col;
+    }
+
     private void setupEmployeeTableColumns(Stage stage) {
-        TableColumn<EmployeeRow, String> idCol = new TableColumn<>("ID");
-        idCol.setCellValueFactory(new PropertyValueFactory<>("id"));
-        idCol.setPrefWidth(50);
-        TableColumn<EmployeeRow, String> nameCol = new TableColumn<>("Name");
-        nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
-        nameCol.setPrefWidth(100);
-        TableColumn<EmployeeRow, String> positionCol = new TableColumn<>("Position");
-        positionCol.setCellValueFactory(new PropertyValueFactory<>("position"));
-        positionCol.setPrefWidth(120);
-        TableColumn<EmployeeRow, String> typeCol = new TableColumn<>("Type");
-        typeCol.setCellValueFactory(new PropertyValueFactory<>("type"));
-        typeCol.setPrefWidth(95);
-        TableColumn<EmployeeRow, String> rateCol = new TableColumn<>("Rate (RM/hr)");
-        rateCol.setCellValueFactory(new PropertyValueFactory<>("rate"));
-        rateCol.setPrefWidth(100);
-        TableColumn<EmployeeRow, String> maxHoursCol = new TableColumn<>("Max Hrs/Wk");
-        maxHoursCol.setCellValueFactory(new PropertyValueFactory<>("maxHours"));
-        maxHoursCol.setPrefWidth(100);
-        TableColumn<EmployeeRow, String> bankCol = new TableColumn<>("Bank Account");
-        bankCol.setCellValueFactory(new PropertyValueFactory<>("bankAccount"));
-        bankCol.setPrefWidth(150);
+        TableColumn<EmployeeRow, String> idCol = textColumn("ID", "id", 45);
+        TableColumn<EmployeeRow, String> nameCol = textColumn("Name", "name", 170);
+        TableColumn<EmployeeRow, String> departmentCol = textColumn("Department", "department", 115);
+        TableColumn<EmployeeRow, String> jobPositionCol = textColumn("Job Position", "jobPosition", 110);
+        TableColumn<EmployeeRow, String> typeCol = textColumn("Type", "type", 85);
+        TableColumn<EmployeeRow, String> rateCol = textColumn("Rate (RM/hr)", "rate", 90);
+        TableColumn<EmployeeRow, String> maxHoursCol = textColumn("Max Hrs/Wk", "maxHours", 90);
+        TableColumn<EmployeeRow, String> icCol = textColumn("IC No.", "icNumber", 110);
+        TableColumn<EmployeeRow, String> epfCol = textColumn("EPF No.", "epfNumber", 115);
+        TableColumn<EmployeeRow, String> socsoCol = textColumn("SOCSO No.", "socsoNumber", 125);
+        TableColumn<EmployeeRow, String> eisCol = textColumn("EIS No.", "eisNumber", 115);
+        TableColumn<EmployeeRow, String> joinedCol = textColumn("Joined", "dateJoined", 90);
+        TableColumn<EmployeeRow, String> bankCol = textColumn("Bank Account", "bankAccount", 110);
 
         TableColumn<EmployeeRow, Void> availCol = new TableColumn<>("Availability");
-        availCol.setPrefWidth(150);
+        availCol.setPrefWidth(130);
         availCol.setCellFactory(col -> new TableCell<>() {
             private final Button editButton = new Button("Set Availability");
             {
@@ -544,7 +543,7 @@ public class MainApp extends Application {
         });
 
         TableColumn<EmployeeRow, Void> prefCol = new TableColumn<>("Preferences");
-        prefCol.setPrefWidth(150);
+        prefCol.setPrefWidth(130);
         prefCol.setCellFactory(col -> new TableCell<>() {
             private final Button prefButton = new Button("Set Preferences");
             {
@@ -561,7 +560,8 @@ public class MainApp extends Application {
         });
 
         employeeTable.getColumns().addAll(
-                idCol, nameCol, positionCol, typeCol, rateCol, maxHoursCol, bankCol, availCol, prefCol);
+                idCol, nameCol, departmentCol, jobPositionCol, typeCol, rateCol, maxHoursCol,
+                icCol, epfCol, socsoCol, eisCol, joinedCol, bankCol, availCol, prefCol);
     }
 
     private void openRegistrationDialog(Stage owner) {
@@ -577,24 +577,38 @@ public class MainApp extends Application {
         }
     }
 
+        private static String orBlank(String value) {
+        return value == null ? "" : value;
+    }
+
     private void loadEmployeesIntoTable() {
         Thread worker = new Thread(() -> {
             try {
                 List<Role> roles = new RoleDao().findAll();
                 roleNamesById = roles.stream()
                         .collect(Collectors.toMap(Role::getRoleId, Role::getRoleName));
+                Map<Integer, String> positionNamesById = new com.questiu.scheduler.dao.JobPositionDao().findNamesById();
                 List<Employee> employees = new EmployeeDao().findAll();
 
                 ObservableList<EmployeeRow> rows = FXCollections.observableArrayList();
                 for (Employee e : employees) {
+                    String jobPosition = e.getJobPositionId() == null
+                            ? "(not set)"
+                            : positionNamesById.getOrDefault(e.getJobPositionId(), "Position #" + e.getJobPositionId());
                     rows.add(new EmployeeRow(
                             String.valueOf(e.getEmployeeId()),
                             e.getFullName(),
                             roleNamesById.getOrDefault(e.getRoleId(), "Role #" + e.getRoleId()),
+                            jobPosition,
                             e.getEmploymentType().name(),
                             e.getHourlyRate().toPlainString(),
                             e.getMaxWeeklyHours().toPlainString(),
-                            e.getBankAccountNumber() == null ? "" : e.getBankAccountNumber()
+                            orBlank(e.getBankAccountNumber()),
+                            orBlank(e.getIcNumber()),
+                            orBlank(e.getEpfNumber()),
+                            orBlank(e.getSocsoNumber()),
+                            orBlank(e.getEisNumber()),
+                            e.getDateJoined() == null ? "" : e.getDateJoined().toString()
                     ));
                 }
                 javafx.application.Platform.runLater(() -> {
@@ -641,26 +655,41 @@ public class MainApp extends Application {
         public String getNetPay() { return netPay; }
     }
 
-    public static class EmployeeRow {
-        private final String id, name, position, type, rate, maxHours, bankAccount;
+        public static class EmployeeRow {
+        private final String id, name, department, jobPosition, type, rate, maxHours, bankAccount,
+                icNumber, epfNumber, socsoNumber, eisNumber, dateJoined;
 
-        public EmployeeRow(String id, String name, String position, String type,
-                            String rate, String maxHours, String bankAccount) {
+        public EmployeeRow(String id, String name, String department, String jobPosition, String type,
+                            String rate, String maxHours, String bankAccount,
+                            String icNumber, String epfNumber, String socsoNumber,
+                            String eisNumber, String dateJoined) {
             this.id = id;
             this.name = name;
-            this.position = position;
+            this.department = department;
+            this.jobPosition = jobPosition;
             this.type = type;
             this.rate = rate;
             this.maxHours = maxHours;
             this.bankAccount = bankAccount;
+            this.icNumber = icNumber;
+            this.epfNumber = epfNumber;
+            this.socsoNumber = socsoNumber;
+            this.eisNumber = eisNumber;
+            this.dateJoined = dateJoined;
         }
 
         public String getId() { return id; }
         public String getName() { return name; }
-        public String getPosition() { return position; }
+        public String getDepartment() { return department; }
+        public String getJobPosition() { return jobPosition; }
         public String getType() { return type; }
         public String getRate() { return rate; }
         public String getMaxHours() { return maxHours; }
         public String getBankAccount() { return bankAccount; }
+        public String getIcNumber() { return icNumber; }
+        public String getEpfNumber() { return epfNumber; }
+        public String getSocsoNumber() { return socsoNumber; }
+        public String getEisNumber() { return eisNumber; }
+        public String getDateJoined() { return dateJoined; }
     }
 }
