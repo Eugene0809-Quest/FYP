@@ -96,7 +96,7 @@ public class MainApp extends Application {
     }
         private void showStaffScreen(Stage stage, User staffUser) {
         currentUser = staffUser;
-        Scene scene = new Scene(StaffHomeView.build(staffUser, company, () -> showLoginScreen(stage)), 1000, 640);
+        Scene scene = new Scene(StaffHomeView.build(staffUser, company, () -> showLoginScreen(stage)), 1250, 680);
         scene.getStylesheets().add(getClass().getResource(STYLESHEET).toExternalForm());
         stage.setScene(scene);
         stage.setMinWidth(800);
@@ -113,6 +113,7 @@ public class MainApp extends Application {
         tabs.getTabs().add(new Tab("Roster & Payroll", buildRosterTab()));
         tabs.getTabs().add(new Tab("Employees", buildEmployeesTab(stage)));
         tabs.getTabs().add(new Tab("Public Holidays", new PublicHolidayPane()));
+        tabs.getTabs().add(new Tab("Leave Requests", AdminLeavePane.build(loggedInUser)));
         tabs.getTabs().forEach(t -> t.setClosable(false));
 
         Label sessionLabel = new Label(

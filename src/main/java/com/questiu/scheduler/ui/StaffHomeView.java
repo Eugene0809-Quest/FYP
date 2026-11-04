@@ -30,8 +30,8 @@ import java.util.stream.Collectors;
  * lead to staff or admin"). A staff member sees only their own record - none
  * of the admin tabs (roster generation, all employees, public holidays).
  *
- * This first version has one tab, "My Profile". "My Schedule" and "My Leave"
- * tabs are added in the next steps.
+ * Tabs: "My Profile" and "My Leave" (request leave, see its status). A
+ * "My Schedule" tab is added in a later step.
  */
 public class StaffHomeView {
 
@@ -56,6 +56,9 @@ public class StaffHomeView {
         Tab profileTab = new Tab("My Profile", buildProfile(user));
         profileTab.setClosable(false);
         tabs.getTabs().add(profileTab);
+        Tab leaveTab = new Tab("My Leave", StaffLeavePane.build(user));
+        leaveTab.setClosable(false);
+        tabs.getTabs().add(leaveTab);
 
         BorderPane root = new BorderPane();
         root.setTop(topBar);
