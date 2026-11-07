@@ -114,6 +114,7 @@ public class MainApp extends Application {
         tabs.getTabs().add(new Tab("Employees", buildEmployeesTab(stage)));
         tabs.getTabs().add(new Tab("Public Holidays", new PublicHolidayPane()));
         tabs.getTabs().add(new Tab("Leave Requests", AdminLeavePane.build(loggedInUser)));
+        tabs.getTabs().add(new Tab("Saved Schedules", new SavedSchedulesPane()));
         tabs.getTabs().forEach(t -> t.setClosable(false));
 
         Label sessionLabel = new Label(
@@ -313,6 +314,15 @@ public class MainApp extends Application {
                 System.out.println("[UI] Loaded " + shifts.size() + " shifts");
                 List<Availability> availability = new AvailabilityDao().findAll();
                 System.out.println("[UI] Loaded " + availability.size() + " availability rows");
+                List<LeaveRequest> approvedLeave = new com.questiu.scheduler.dao.LeaveRequestDao()
+                        .findApprovedOverlapping(weekStart, weekStart.plusDays(6));
+                Map<Integer, Set<Integer>> leaveDays = com.questiu.scheduler.solver.LeaveAvailabilityFilter
+                        .leaveDaysByEmployee(approvedLeave, weekStart);
+                final int leaveDayCount = com.questiu.scheduler.solver.LeaveAvailabilityFilter
+                        .countEmployeeDays(leaveDays);
+                List<Availability> usableAvailability = com.questiu.scheduler.solver.LeaveAvailabilityFilter
+                        .apply(availability, leaveDays);
+                System.out.println("[UI] Approved leave removes " + leaveDayCount + " employee-day(s) this week");
                 Set<LocalDate> publicHolidays = new PublicHolidayDao().findAllDates();
                 System.out.println("[UI] Loaded " + publicHolidays.size() + " public holidays on file");
 
@@ -321,7 +331,7 @@ public class MainApp extends Application {
                 List<Preference> preferences = new PreferenceDao().findAll();
                 System.out.println("[UI] Loaded " + preferences.size() + " shift preferences");
                 SchedulingEngine.SolveResult result = new SchedulingEngine()
-                        .solve(employees, shifts, availability, preferences, 10.0);
+                        .solve(employees, shifts, usableAvailability, preferences, 10.0);
                 System.out.println("[UI] Solve returned. Status: " + result.status);
 
                 if (!result.isFeasible()) {
@@ -361,11 +371,11 @@ public class MainApp extends Application {
 
                 javafx.application.Platform.runLater(() -> {
                     payrollTable.setItems(rows);
-                    statusLabel.setText(String.format(
-                            "Status: %s | Solve time: %d ms | Unfilled slots: %d | Preferences granted: %d, avoided-but-assigned: %d (violation score %d) | Week: %s | Holidays this week: %d | Net payroll: RM%.2f | Employer cost: RM%.2f",
+                            statusLabel.setText(String.format(
+                            "Status: %s | Solve time: %d ms | Unfilled slots: %d | Preferences granted: %d, avoided-but-assigned: %d (violation score %d) | Week: %s | Holidays this week: %d | Leave days respected: %d | Net payroll: RM%.2f | Employer cost: RM%.2f",
                             result.status, result.solveTimeMillis, result.totalUnfilled,
                             prefScore.preferredGranted, prefScore.avoidedImposed, prefScore.violationScore,
-                            weekStart, holidaysThisWeek, totalNet, totalEmployerCost));
+                            weekStart, holidaysThisWeek, leaveDayCount, totalNet, totalEmployerCost));
                     lastAssignments = result.assignments;
                     lastPayroll = payroll;
                     lastShiftsById = shiftsById;
