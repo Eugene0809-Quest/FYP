@@ -34,4 +34,24 @@ public class UserDao {
         }
         return null;
     }
+
+    /**
+     * True if this login may be used. ADMIN and MANAGER accounts have no linked
+     * employee, so they are always allowed. A STAFF account is allowed only while
+     * its linked employee is active (employee.is_active), so deactivating an
+     * employee (e.g. when they leave) also blocks their login.
+     */
+    public boolean isLoginAllowed(User user) throws SQLException {
+        if (user.getEmployeeId() == null) {
+            return true;
+        }
+        String sql = "SELECT is_active FROM employee WHERE employee_id = ?";
+        try (Connection conn = DatabaseConnection.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, user.getEmployeeId());
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() && rs.getBoolean("is_active");
+            }
+        }
+    }
 }

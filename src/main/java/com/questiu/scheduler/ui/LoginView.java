@@ -57,9 +57,16 @@ public class LoginView {
                 return;
             }
             try {
-                User user = new UserDao().findByUsername(username);
+                UserDao userDao = new UserDao();
+                User user = userDao.findByUsername(username);
                 if (user == null || !PasswordHasher.matches(password, user.getPasswordHash())) {
                     errorLabel.setText("Invalid username or password.");
+                    return;
+                }
+                // Checked only after the password is right, so the message does not
+                // reveal anything about an account to someone who does not know it.
+                if (!userDao.isLoginAllowed(user)) {
+                    errorLabel.setText("This account has been deactivated. Please contact the administrator.");
                     return;
                 }
                 errorLabel.setText("");
