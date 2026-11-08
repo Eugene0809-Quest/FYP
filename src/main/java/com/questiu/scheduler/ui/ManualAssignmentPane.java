@@ -4,6 +4,8 @@ import com.questiu.scheduler.model.Availability;
 import com.questiu.scheduler.model.Employee;
 import com.questiu.scheduler.model.RosterAssignment;
 import com.questiu.scheduler.model.Shift;
+import javafx.beans.property.SimpleStringProperty;
+import javafx.beans.property.StringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
@@ -51,6 +53,7 @@ public class ManualAssignmentPane extends BorderPane {
         private final ComboBox<Employee> assignBox;
         private final List<Employee> eligible;              // role + availability match, before leave
         private final ObservableList<Employee> options;     // what the dropdown currently shows
+        private final StringProperty dateText = new SimpleStringProperty("");
 
         SlotRow(Shift shift, int slotNumber, List<Employee> eligible) {
             this.shift = shift;
@@ -112,6 +115,10 @@ public class ManualAssignmentPane extends BorderPane {
                     shift.getStartTime(), shift.getEndTime());
         }
 
+        /** Calendar date of this slot for the chosen week, e.g. "04/11/2026" or "05/11/2026 (Holiday)". */
+        public String getDateText() { return dateText.get(); }
+        public StringProperty dateTextProperty() { return dateText; }
+
         public String getDay() { return DAY_NAMES[shift.getDayOfWeek() - 1]; }
         public String getTime() { return shift.getStartTime() + " - " + shift.getEndTime(); }
         public String getSlot() { return "Slot " + slotNumber + " of " + shift.getStaffNeeded(); }
@@ -172,13 +179,20 @@ public class ManualAssignmentPane extends BorderPane {
     private TableView<SlotRow> buildTable(List<SlotRow> rowsForRole) {
         TableView<SlotRow> table = new TableView<>();
 
+        TableColumn<SlotRow, String> dateCol = new TableColumn<>("Date");
+        dateCol.setCellValueFactory(new PropertyValueFactory<>("dateText"));
+        dateCol.setPrefWidth(175);
         TableColumn<SlotRow, String> dayCol = new TableColumn<>("Day");
         dayCol.setCellValueFactory(new PropertyValueFactory<>("day"));
+        dayCol.setPrefWidth(100);
         TableColumn<SlotRow, String> timeCol = new TableColumn<>("Time");
         timeCol.setCellValueFactory(new PropertyValueFactory<>("time"));
+        timeCol.setPrefWidth(125);
         TableColumn<SlotRow, String> slotCol = new TableColumn<>("Slot");
         slotCol.setCellValueFactory(new PropertyValueFactory<>("slot"));
+        slotCol.setPrefWidth(105);
         TableColumn<SlotRow, Void> assignCol = new TableColumn<>("Assign Employee");
+        assignCol.setPrefWidth(240);
         assignCol.setCellFactory(col -> new TableCell<>() {
             @Override
             protected void updateItem(Void item, boolean empty) {
@@ -191,7 +205,7 @@ public class ManualAssignmentPane extends BorderPane {
             }
         });
 
-        table.getColumns().addAll(dayCol, timeCol, slotCol, assignCol);
+        table.getColumns().addAll(dateCol, dayCol, timeCol, slotCol, assignCol);
         table.setItems(FXCollections.observableArrayList(rowsForRole));
         return table;
     }
@@ -206,6 +220,22 @@ public class ManualAssignmentPane extends BorderPane {
             }
         }
         return result;
+    }
+
+    /**
+     * Shows the real calendar date next to each weekday for the chosen roster week, and
+     * marks public holidays (paid at 2x). Only the date text changes, so the admin's picks
+     * are untouched when the week changes.
+     *
+     * @param weekStart the Monday of the roster week
+     * @param holidays  dates stored in the public_holiday table
+     */
+    public void setWeek(LocalDate weekStart, Set<LocalDate> holidays) {
+        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        for (SlotRow row : allRows) {
+            LocalDate date = weekStart.plusDays(row.shift.getDayOfWeek() - 1L);
+            row.dateText.set(date.format(fmt) + (holidays.contains(date) ? " (Holiday)" : ""));
+        }
     }
 
     /**

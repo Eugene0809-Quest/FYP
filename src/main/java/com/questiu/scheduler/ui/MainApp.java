@@ -31,7 +31,10 @@ import javafx.stage.Stage;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.TemporalAdjusters;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -56,6 +59,8 @@ public class MainApp extends Application {
     private final RadioButton manualRadio = new RadioButton("Manual Assignment");
     private final DatePicker weekStartPicker = new DatePicker(mondayOf(LocalDate.now()));
     private final BorderPane rosterContent = new BorderPane();
+    private final StatusSummaryPane summaryPane = new StatusSummaryPane();
+    private static final DateTimeFormatter DMY = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private List<Employee> cachedEmployees;
     private List<Shift> cachedShifts;
     private ManualAssignmentPane manualPane;
@@ -213,7 +218,11 @@ public class MainApp extends Application {
         HBox.setHgrow(statusLabel, Priority.ALWAYS);
         statusLabel.setMaxWidth(Double.MAX_VALUE);
 
-        VBox topBar = new VBox(6, controlsRow, statusRow);
+        // The plain message line takes no space when it is empty (the summary block below shows results).
+        statusRow.visibleProperty().bind(statusLabel.textProperty().isNotEmpty());
+        statusRow.managedProperty().bind(statusLabel.textProperty().isNotEmpty());
+
+        VBox topBar = new VBox(6, controlsRow, statusRow, summaryPane);
         topBar.setPadding(new Insets(10));
 
         setupPayrollTableColumns();
@@ -305,7 +314,10 @@ public class MainApp extends Application {
             try {
                 Map<Integer, Set<Integer>> leaveDays = loadLeaveDays(weekStart);
                 int leaveDayCount = com.questiu.scheduler.solver.LeaveAvailabilityFilter.countEmployeeDays(leaveDays);
+                Set<LocalDate> holidays = new PublicHolidayDao().findAllDates();
                 javafx.application.Platform.runLater(() -> {
+                    pane.setWeek(weekStart, holidays);
+                    summaryPane.clear(); // a result shown for another week would be misleading
                     List<String> cleared = pane.applyLeave(leaveDays, weekStart);
                     pane.setWarningText(cleared.isEmpty() ? ""
                             : "Picks cleared because of approved leave:\n" + String.join("\n", cleared));
@@ -323,7 +335,66 @@ public class MainApp extends Application {
         worker.start();
     }
 
+    private static String money(double amount) {
+        return String.format("RM%,.2f", amount);
+    }
+
+    /** Result block for Automatic mode: one labelled row each for solver, week, preferences and payroll. */
+    private void showAutoSummary(String solverStatus, long solveMillis, int unfilled,
+                                 PreferenceScorer.Result prefScore, LocalDate weekStart,
+                                 long holidaysThisWeek, int leaveDayCount,
+                                 double totalNet, double totalEmployerCost) {
+        Map<String, List<StatusSummaryPane.Item>> rows = new LinkedHashMap<>();
+        rows.put("Solver", List.of(
+                solverStatus.equals("OPTIMAL")
+                        ? StatusSummaryPane.good("Status", solverStatus)
+                        : StatusSummaryPane.warn("Status", solverStatus),
+                StatusSummaryPane.item("Solve time", String.format("%,d ms", solveMillis)),
+                StatusSummaryPane.warnIf(unfilled > 0, "Unfilled slots", String.valueOf(unfilled))));
+        rows.put("Week", List.of(
+                StatusSummaryPane.item("Week starting", weekStart.format(DMY)),
+                StatusSummaryPane.item("Holidays this week", String.valueOf(holidaysThisWeek)),
+                StatusSummaryPane.item("Leave days respected", String.valueOf(leaveDayCount))));
+        rows.put("Preferences", preferenceItems(prefScore));
+        rows.put("Payroll", List.of(
+                StatusSummaryPane.item("Net payroll", money(totalNet)),
+                StatusSummaryPane.item("Employer cost", money(totalEmployerCost))));
+        summaryPane.showRows(rows);
+    }
+
+    /** Result block for Manual mode: coverage and warnings first, then the same week/preferences/payroll rows. */
+    private void showManualSummary(ManualScheduleValidator.ValidationResult validation,
+                                   PreferenceScorer.Result prefScore, LocalDate weekStart,
+                                   long holidaysThisWeek, double totalNet, double totalEmployerCost) {
+        Map<String, List<StatusSummaryPane.Item>> rows = new LinkedHashMap<>();
+        rows.put("Roster", List.of(
+                StatusSummaryPane.item("Mode", "Manual"),
+                StatusSummaryPane.warnIf(validation.unfilledSlots > 0, "Coverage",
+                        String.format("%.0f%% (%d of %d slots filled)", validation.coveragePercent(),
+                                validation.totalSlots - validation.unfilledSlots, validation.totalSlots)),
+                StatusSummaryPane.warnIf(!validation.violations.isEmpty(), "Warnings",
+                        String.valueOf(validation.violations.size()))));
+        rows.put("Week", List.of(
+                StatusSummaryPane.item("Week starting", weekStart.format(DMY)),
+                StatusSummaryPane.item("Holidays this week", String.valueOf(holidaysThisWeek))));
+        rows.put("Preferences", preferenceItems(prefScore));
+        rows.put("Payroll", List.of(
+                StatusSummaryPane.item("Net payroll", money(totalNet)),
+                StatusSummaryPane.item("Employer cost", money(totalEmployerCost))));
+        summaryPane.showRows(rows);
+    }
+
+    private static List<StatusSummaryPane.Item> preferenceItems(PreferenceScorer.Result prefScore) {
+        return List.of(
+                StatusSummaryPane.item("Granted", String.valueOf(prefScore.preferredGranted)),
+                StatusSummaryPane.warnIf(prefScore.avoidedImposed > 0, "Avoided but assigned",
+                        String.valueOf(prefScore.avoidedImposed)),
+                StatusSummaryPane.warnIf(prefScore.violationScore > 0, "Violation score",
+                        String.valueOf(prefScore.violationScore)));
+    }
+
     private void refreshRosterModeView() {
+        summaryPane.clear();
         if (manualRadio.isSelected()) {
             if (manualPane == null) {
                 rosterContent.setCenter(new Label("Loading employees, shifts and availability..."));
@@ -352,7 +423,10 @@ public class MainApp extends Application {
         Thread worker = new Thread(() -> {
             try {
                 System.out.println("[UI] Starting pipeline...");
-                javafx.application.Platform.runLater(() -> statusLabel.setText("Loading data..."));
+                javafx.application.Platform.runLater(() -> {
+                    summaryPane.clear();
+                    statusLabel.setText("Loading data...");
+                });
 
                 List<Employee> employees = new EmployeeDao().findAllActive();
                 System.out.println("[UI] Loaded " + employees.size() + " employees");
@@ -417,11 +491,10 @@ public class MainApp extends Application {
 
                 javafx.application.Platform.runLater(() -> {
                     payrollTable.setItems(rows);
-                            statusLabel.setText(String.format(
-                            "Status: %s | Solve time: %d ms | Unfilled slots: %d | Preferences granted: %d, avoided-but-assigned: %d (violation score %d) | Week: %s | Holidays this week: %d | Leave days respected: %d | Net payroll: RM%.2f | Employer cost: RM%.2f",
-                            result.status, result.solveTimeMillis, result.totalUnfilled,
-                            prefScore.preferredGranted, prefScore.avoidedImposed, prefScore.violationScore,
-                            weekStart, holidaysThisWeek, leaveDayCount, totalNet, totalEmployerCost));
+                    statusLabel.setText("Roster generated for the week starting " + weekStart.format(DMY)
+                            + ". Check it below, then click Save to Database.");
+                    showAutoSummary(result.status.toString(), result.solveTimeMillis, result.totalUnfilled,
+                            prefScore, weekStart, holidaysThisWeek, leaveDayCount, totalNet, totalEmployerCost);
                     lastAssignments = result.assignments;
                     lastPayroll = payroll;
                     lastShiftsById = shiftsById;
@@ -511,13 +584,9 @@ public class MainApp extends Application {
         } catch (Exception ex) {
             prefScore = PreferenceScorer.score(assignments, List.of());
         }
-        statusLabel.setText(String.format(
-                "Manual mode | Week: %s | Coverage: %.0f%% (%d/%d slots filled) | Warnings: %d | Preferences granted: %d, avoided-but-assigned: %d (violation score %d) | Holidays this week: %d | Net payroll: RM%.2f | Employer cost: RM%.2f",
-                weekStart, validation.coveragePercent(),
-                validation.totalSlots - validation.unfilledSlots, validation.totalSlots,
-                validation.violations.size(),
-                prefScore.preferredGranted, prefScore.avoidedImposed, prefScore.violationScore,
-                holidaysThisWeek, totalNet, totalEmployerCost));
+        statusLabel.setText("Manual roster calculated for the week starting " + weekStart.format(DMY)
+                + ". Check it below, then click Save to Database.");
+        showManualSummary(validation, prefScore, weekStart, holidaysThisWeek, totalNet, totalEmployerCost);
 
         lastAssignments = assignments;
         lastPayroll = payroll;
