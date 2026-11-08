@@ -11,10 +11,13 @@ import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.BorderPane;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -46,12 +49,15 @@ public class ManualAssignmentPane extends BorderPane {
         private final Shift shift;
         private final int slotNumber;
         private final ComboBox<Employee> assignBox;
+        private final List<Employee> eligible;              // role + availability match, before leave
+        private final ObservableList<Employee> options;     // what the dropdown currently shows
 
         SlotRow(Shift shift, int slotNumber, List<Employee> eligible) {
             this.shift = shift;
             this.slotNumber = slotNumber;
+            this.eligible = eligible;
 
-            ObservableList<Employee> options = FXCollections.observableArrayList();
+            options = FXCollections.observableArrayList();
             options.add(null); // "-- Unassigned --"
             options.addAll(eligible);
 
@@ -69,6 +75,41 @@ public class ManualAssignmentPane extends BorderPane {
                     setText(empty ? null : (e == null ? "-- Unassigned --" : e.getFullName()));
                 }
             };
+        }
+
+        /**
+         * Rebuilds this slot's dropdown without the people on approved leave that
+         * day. A pick that is still allowed is kept. A pick that is now on leave is
+         * cleared and described in the returned text; returns null if nothing was cleared.
+         */
+        String applyLeave(Map<Integer, Set<Integer>> leaveDays, LocalDate weekStart) {
+            Employee previous = assignBox.getValue();
+            List<Employee> allowed = eligible.stream()
+                    .filter(e -> !leaveDays.getOrDefault(e.getEmployeeId(), Set.of())
+                            .contains(shift.getDayOfWeek()))
+                    .collect(Collectors.toList());
+
+            List<Employee> newOptions = new ArrayList<>();
+            newOptions.add(null); // "-- Unassigned --"
+            newOptions.addAll(allowed);
+            options.setAll(newOptions);
+
+            if (previous != null && allowed.contains(previous)) {
+                assignBox.getSelectionModel().select(previous);
+                return null;
+            }
+            // Back to unassigned. The value must be cleared explicitly: after the item list is
+            // replaced, ComboBox keeps the old value and selectFirst() alone would not drop it.
+            assignBox.setValue(null);
+            assignBox.getSelectionModel().selectFirst();
+            if (previous == null) {
+                return null;
+            }
+            LocalDate date = weekStart.plusDays(shift.getDayOfWeek() - 1L);
+            return String.format("%s removed from %s %s %s - %s (approved leave)",
+                    previous.getFullName(), getDay(),
+                    date.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")),
+                    shift.getStartTime(), shift.getEndTime());
         }
 
         public String getDay() { return DAY_NAMES[shift.getDayOfWeek() - 1]; }
@@ -165,6 +206,24 @@ public class ManualAssignmentPane extends BorderPane {
             }
         }
         return result;
+    }
+
+    /**
+     * Hides people on approved leave from the dropdowns for the given roster week,
+     * keeping every pick that is still valid (the screen is NOT rebuilt, so the
+     * admin's other picks survive a change of week). Returns a description of each
+     * pick that had to be cleared because that person is on leave.
+     *
+     * @param leaveDays employeeId -> days of the week (1 = Monday ... 7 = Sunday) on approved leave
+     * @param weekStart the Monday of the roster week
+     */
+    public List<String> applyLeave(Map<Integer, Set<Integer>> leaveDays, LocalDate weekStart) {
+        List<String> cleared = new ArrayList<>();
+        for (SlotRow row : allRows) {
+            String message = row.applyLeave(leaveDays, weekStart);
+            if (message != null) cleared.add(message);
+        }
+        return cleared;
     }
 
     public void setWarningText(String text) {

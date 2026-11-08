@@ -178,6 +178,13 @@ public class MainApp extends Application {
         weekStartPicker.setConverter(DateFormats.dayMonthYear());
         weekStartPicker.setTooltip(new Tooltip(
                 "The Monday of the week you're generating a roster for - matched against the Public Holidays calendar."));
+        // Manual mode: when the week changes, hide people on approved leave for the new week
+        // (the screen is not rebuilt, so the other picks are kept).
+        weekStartPicker.valueProperty().addListener((obs, oldV, newV) -> {
+            if (manualRadio.isSelected() && manualPane != null) {
+                refreshManualLeave();
+            }
+        });
 
         Button generateButton = new Button("Generate Roster & Payroll");
         generateButton.getStyleClass().add("primary-button");
@@ -267,10 +274,49 @@ public class MainApp extends Application {
                     cachedShifts = shifts;
                     manualPane = new ManualAssignmentPane(employees, shifts, availability, roleNames);
                     refreshRosterModeView();
+                    refreshManualLeave();
                 });
             } catch (Exception ex) {
                 javafx.application.Platform.runLater(() ->
                         statusLabel.setText("Error loading shift data: " + ex.getMessage()));
+            }
+        });
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /** employeeId -> days of the roster week (1-7) on approved leave; same source the automatic mode uses. */
+    private Map<Integer, Set<Integer>> loadLeaveDays(LocalDate weekStart) throws Exception {
+        List<LeaveRequest> approvedLeave = new com.questiu.scheduler.dao.LeaveRequestDao()
+                .findApprovedOverlapping(weekStart, weekStart.plusDays(6));
+        return com.questiu.scheduler.solver.LeaveAvailabilityFilter.leaveDaysByEmployee(approvedLeave, weekStart);
+    }
+
+    /**
+     * Manual mode: hides people on approved leave from the slot dropdowns for the
+     * week in the picker. Keeps every pick that is still valid; a pick that is now on
+     * leave is cleared and listed in the warning text under the table.
+     */
+    private void refreshManualLeave() {
+        ManualAssignmentPane pane = manualPane;
+        if (pane == null) return;
+        LocalDate weekStart = mondayOf(weekStartPicker.getValue() != null ? weekStartPicker.getValue() : LocalDate.now());
+        Thread worker = new Thread(() -> {
+            try {
+                Map<Integer, Set<Integer>> leaveDays = loadLeaveDays(weekStart);
+                int leaveDayCount = com.questiu.scheduler.solver.LeaveAvailabilityFilter.countEmployeeDays(leaveDays);
+                javafx.application.Platform.runLater(() -> {
+                    List<String> cleared = pane.applyLeave(leaveDays, weekStart);
+                    pane.setWarningText(cleared.isEmpty() ? ""
+                            : "Picks cleared because of approved leave:\n" + String.join("\n", cleared));
+                    if (manualRadio.isSelected()) {
+                        statusLabel.setText("Pick who works each shift, then click 'Generate Roster & Payroll'. "
+                                + "Week " + weekStart + ": approved leave hides " + leaveDayCount + " employee-day(s) from the lists.");
+                    }
+                });
+            } catch (Exception ex) {
+                javafx.application.Platform.runLater(() ->
+                        statusLabel.setText("Error loading approved leave: " + ex.getMessage()));
             }
         });
         worker.setDaemon(true);
@@ -419,12 +465,19 @@ public class MainApp extends Application {
         }
 
         List<RosterAssignment> assignments = manualPane.buildAssignments();
+        Map<Integer, Set<Integer>> leaveDays;
+        try {
+            leaveDays = loadLeaveDays(weekStart);
+        } catch (Exception ex) {
+            statusLabel.setText("Error loading approved leave: " + ex.getMessage());
+            leaveDays = Map.of();
+        }
         ManualScheduleValidator.ValidationResult validation =
-                new ManualScheduleValidator().validate(cachedEmployees, cachedShifts, assignments);
+                new ManualScheduleValidator().validate(cachedEmployees, cachedShifts, assignments, leaveDays, weekStart);
 
         manualPane.setWarningText(validation.isClean()
                 ? ""
-                : "Compliance warnings (NO_OVERLAP / MAX_HOURS):\n" + String.join("\n", validation.violations));
+                : "Compliance warnings (NO_OVERLAP / MAX_HOURS / LEAVE):\n" + String.join("\n", validation.violations));
 
         Map<Integer, Shift> shiftsById = cachedShifts.stream()
                 .collect(Collectors.toMap(Shift::getShiftId, s -> s));
