@@ -5,6 +5,7 @@ import javafx.geometry.Pos;
 import javafx.scene.control.Label;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
 import java.util.List;
@@ -59,8 +60,8 @@ public class StatusSummaryPane extends VBox {
     private static final String LABEL_STYLE = "-fx-text-fill: #64748b; -fx-font-size: 12px;";
 
     public StatusSummaryPane() {
-        setSpacing(6);
-        setPadding(new Insets(8, 14, 8, 14));
+        setSpacing(8);
+        setPadding(new Insets(10, 16, 10, 16));
         setStyle("-fx-background-color: white; -fx-border-color: #e2e8f0; "
                 + "-fx-border-radius: 8; -fx-background-radius: 8;");
         clear();
@@ -69,20 +70,33 @@ public class StatusSummaryPane extends VBox {
     /** Shows the given rows (title -> items), replacing whatever was shown before. */
     public void showRows(Map<String, List<Item>> rows) {
         getChildren().clear();
+        boolean first = true;
         for (Map.Entry<String, List<Item>> row : rows.entrySet()) {
+            if (!first) {
+                // thin divider so each row reads as its own line
+                Region divider = new Region();
+                divider.setMinHeight(1);
+                divider.setPrefHeight(1);
+                divider.setMaxHeight(1);
+                divider.setStyle("-fx-background-color: #eef2f7;");
+                getChildren().add(divider);
+            }
+            first = false;
+
             Label title = new Label(row.getKey().toUpperCase());
             title.setStyle(TITLE_STYLE);
-            title.setMinWidth(92);
-            title.setPrefWidth(92);
+            title.setMinWidth(104);
+            title.setPrefWidth(104);
 
-            FlowPane items = new FlowPane(26, 2);
+            FlowPane items = new FlowPane(34, 4);
             for (Item item : row.getValue()) {
                 items.getChildren().add(buildItem(item));
             }
             HBox.setHgrow(items, javafx.scene.layout.Priority.ALWAYS);
 
-            HBox line = new HBox(10, title, items);
+            HBox line = new HBox(14, title, items);
             line.setAlignment(Pos.TOP_LEFT);
+            line.setPadding(new Insets(2, 0, 2, 0));
             getChildren().add(line);
         }
         setVisible(!rows.isEmpty());
@@ -105,9 +119,9 @@ public class StatusSummaryPane extends VBox {
             case GOOD -> "#15803d";
             default -> "#0f172a";
         };
-        value.setStyle("-fx-font-weight: bold; -fx-font-size: 13px; -fx-text-fill: " + colour + ";");
+        value.setStyle("-fx-font-weight: bold; -fx-font-size: 14px; -fx-text-fill: " + colour + ";");
 
-        HBox box = new HBox(6, label, value);
+        HBox box = new HBox(8, label, value);
         box.setAlignment(Pos.BASELINE_LEFT);
         return box;
     }
