@@ -2,10 +2,12 @@ package com.questiu.scheduler.ui;
 
 import com.questiu.scheduler.dao.EmployeeDao;
 import com.questiu.scheduler.dao.JobPositionDao;
+import com.questiu.scheduler.dao.UserDao;
 import com.questiu.scheduler.model.Employee;
 import com.questiu.scheduler.model.EmploymentType;
 import com.questiu.scheduler.model.JobPosition;
 import com.questiu.scheduler.model.Role;
+import com.questiu.scheduler.util.PasswordHasher;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
@@ -31,6 +33,10 @@ import java.util.stream.Collectors;
  * department, so a Head Chef can never be filed under Front-of-House),
  * the IC / EPF / SOCSO / EIS numbers and the joining date, following the
  * lecturer's feedback on the prototype.
+ *
+ * It can also create the employee's STAFF login in the same step (username +
+ * initial password chosen by the admin). The employee and the login are saved
+ * together or not at all (EmployeeDao.registerWithLogin).
  */
 public class EmployeeRegistrationDialog {
 
@@ -79,6 +85,7 @@ public class EmployeeRegistrationDialog {
         TextField socsoField = new TextField();
         TextField eisField = new TextField();
         DatePicker joinedPicker = new DatePicker(LocalDate.now());
+        joinedPicker.setConverter(DateFormats.dayMonthYear());
 
         TextField bankField = new TextField();
         ComboBox<EmploymentType> typeBox = new ComboBox<>(
@@ -91,6 +98,19 @@ public class EmployeeRegistrationDialog {
         typeBox.valueProperty().addListener((obs, oldV, newV) -> {
             if (newV != null) maxHoursField.setText(newV.defaultMaxWeeklyHours().toString());
         });
+
+        // ---- Staff login, created together with the employee ----
+        CheckBox createLoginBox = new CheckBox("Create a staff login for this employee");
+        createLoginBox.setSelected(true);
+        TextField usernameField = new TextField();
+        usernameField.setPromptText("e.g. ahmad");
+        PasswordField passwordField = new PasswordField();
+        passwordField.setPromptText("at least 8 characters");
+        PasswordField confirmField = new PasswordField();
+        confirmField.setPromptText("type the password again");
+        usernameField.disableProperty().bind(createLoginBox.selectedProperty().not());
+        passwordField.disableProperty().bind(createLoginBox.selectedProperty().not());
+        confirmField.disableProperty().bind(createLoginBox.selectedProperty().not());
 
         Label errorLabel = new Label();
         errorLabel.setStyle("-fx-text-fill: red;");
@@ -110,6 +130,10 @@ public class EmployeeRegistrationDialog {
         grid.addRow(r++, new Label("Employment Type:"), typeBox);
         grid.addRow(r++, new Label("Hourly Rate (RM):"), rateField);
         grid.addRow(r++, new Label("Max Hours / Week:"), maxHoursField);
+        grid.add(createLoginBox, 0, r++, 2, 1);
+        grid.addRow(r++, new Label("Username:"), usernameField);
+        grid.addRow(r++, new Label("Initial Password:"), passwordField);
+        grid.addRow(r++, new Label("Confirm Password:"), confirmField);
         grid.add(errorLabel, 1, r++);
 
         Button saveButton = new Button("Register");
@@ -155,18 +179,43 @@ public class EmployeeRegistrationDialog {
                     return;
                 }
 
+                boolean createLogin = createLoginBox.isSelected();
+                String username = usernameField.getText().trim().toLowerCase();
+                String loginError = validateLoginInput(createLogin, username,
+                        passwordField.getText(), confirmField.getText());
+                if (loginError != null) {
+                    errorLabel.setText(loginError);
+                    return;
+                }
+                if (createLogin && new UserDao().usernameExists(username)) {
+                    errorLabel.setText("That username is already taken. Please choose another one.");
+                    return;
+                }
+
                 Employee newEmp = new Employee(0, name, role.getRoleId(), rate, maxHours, true, bank, type,
                         position == null ? null : position.getJobPositionId(),
                         ic, blankToNull(epfField.getText()), blankToNull(socsoField.getText()),
                         blankToNull(eisField.getText()), joinedPicker.getValue());
-                new EmployeeDao().register(newEmp);
+                if (createLogin) {
+                    new EmployeeDao().registerWithLogin(newEmp, username,
+                            PasswordHasher.hash(passwordField.getText()));
+                } else {
+                    new EmployeeDao().register(newEmp);
+                }
                 dialog.close();
                 if (onSaved != null) onSaved.run();
+                if (createLogin) {
+                    showLoginCreatedNotice(owner, name, username);
+                }
             } catch (SQLIntegrityConstraintViolationException dup) {
                 String msg = dup.getMessage() == null ? "" : dup.getMessage();
-                errorLabel.setText(msg.contains("uq_employee_ic") || msg.contains("ic_number")
-                        ? "That IC number is already registered to another employee."
-                        : "Error saving: " + msg);
+                if (msg.contains("uq_employee_ic") || msg.contains("ic_number")) {
+                    errorLabel.setText("That IC number is already registered to another employee.");
+                } else if (msg.contains("username")) {
+                    errorLabel.setText("That username is already taken. Please choose another one.");
+                } else {
+                    errorLabel.setText("Error saving (nothing was saved): " + msg);
+                }
             } catch (Exception ex) {
                 errorLabel.setText("Error saving: " + ex.getMessage());
             }
@@ -175,8 +224,48 @@ public class EmployeeRegistrationDialog {
         HBox buttons = new HBox(10, saveButton, cancelButton);
         grid.add(buttons, 1, r);
 
-        dialog.setScene(new Scene(grid, 460, 600));
+        ScrollPane scroll = new ScrollPane(grid);
+        scroll.setFitToWidth(true);
+        dialog.setScene(new Scene(scroll, 520, 720));
         dialog.showAndWait();
+    }
+
+    /**
+     * Checks the login part of the form. Returns an error message, or null if it is fine
+     * (or if no login is being created). The username is expected already trimmed and in lower case.
+     */
+    static String validateLoginInput(boolean createLogin, String username, String password, String confirm) {
+        if (!createLogin) {
+            return null;
+        }
+        if (username.isEmpty()) {
+            return "Enter a username for the staff login, or untick the box.";
+        }
+        if (!username.matches("[a-z0-9._]{3,30}")) {
+            return "Username must be 3-30 characters: lowercase letters, digits, dot or underscore.";
+        }
+        if (password.length() < 8) {
+            return "The password must be at least 8 characters.";
+        }
+        if (password.equalsIgnoreCase(username)) {
+            return "The password must not be the same as the username.";
+        }
+        if (!password.equals(confirm)) {
+            return "The two passwords do not match.";
+        }
+        return null;
+    }
+
+    /** Tells the admin what to hand over to the employee. The password is deliberately not shown again. */
+    private static void showLoginCreatedNotice(Stage owner, String employeeName, String username) {
+        Alert notice = new Alert(Alert.AlertType.INFORMATION);
+        notice.initOwner(owner);
+        notice.setTitle("Staff login created");
+        notice.setHeaderText(employeeName + " is registered");
+        notice.setContentText("Username: " + username + "\n\n"
+                + "Give the employee this username and the initial password you typed. "
+                + "The password is not shown again.");
+        notice.show();
     }
 
     private static String blankToNull(String value) {

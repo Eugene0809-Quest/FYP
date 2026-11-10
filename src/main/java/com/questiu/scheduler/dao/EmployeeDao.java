@@ -68,12 +68,55 @@ public class EmployeeDao {
      * duplicate IC number.
      */
     public int register(Employee emp) throws SQLException {
+        try (Connection conn = DatabaseConnection.getConnection()) {
+            return insertEmployee(conn, emp);
+        }
+    }
+
+    /**
+     * Registers the employee AND creates their STAFF login in ONE transaction
+     * (FYP2, lecturer feedback: registering a staff member includes their login).
+     * If anything fails - a duplicate username, a duplicate IC number, a position
+     * from the wrong department - nothing is saved: you never end up with an
+     * employee who has no login, or a login that points at no employee.
+     *
+     * @param passwordHash the already-hashed password (see PasswordHasher), never the plain text
+     * @return the new employee_id
+     */
+    public int registerWithLogin(Employee emp, String username, String passwordHash) throws SQLException {
+        String loginSql = "INSERT INTO user_account (username, password_hash, full_name, role, employee_id) " +
+                          "VALUES (?, ?, ?, 'STAFF', ?)";
+        try (Connection conn = DatabaseConnection.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                int employeeId = insertEmployee(conn, emp);
+                if (employeeId <= 0) {
+                    throw new SQLException("The employee was saved but no employee_id was returned.");
+                }
+                try (PreparedStatement ps = conn.prepareStatement(loginSql)) {
+                    ps.setString(1, username);
+                    ps.setString(2, passwordHash);
+                    ps.setString(3, emp.getFullName());
+                    ps.setInt(4, employeeId);
+                    ps.executeUpdate();
+                }
+                conn.commit();
+                return employeeId;
+            } catch (SQLException ex) {
+                conn.rollback();
+                throw ex;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
+    private int insertEmployee(Connection conn, Employee emp) throws SQLException {
         String sql = "INSERT INTO employee (role_id, job_position_id, full_name, ic_number, " +
                      "bank_account_number, epf_number, socso_number, eis_number, employment_type, " +
                      "date_joined, hourly_rate, max_hours_week, is_active) " +
                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        try (Connection conn = DatabaseConnection.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
             ps.setInt(1, emp.getRoleId());
             ps.setObject(2, emp.getJobPositionId(), Types.INTEGER);
             ps.setString(3, emp.getFullName());

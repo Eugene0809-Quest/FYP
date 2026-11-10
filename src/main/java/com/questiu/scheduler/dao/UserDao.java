@@ -35,6 +35,18 @@ public class UserDao {
         return null;
     }
 
+    /** True if a login with this username already exists (used to give a friendly message before saving). */
+    public boolean usernameExists(String username) throws SQLException {
+        String sql = "SELECT 1 FROM user_account WHERE username = ?";
+        try (Connection conn = DatabaseConnection.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, username);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
     /**
      * True if this login may be used. ADMIN and MANAGER accounts have no linked
      * employee, so they are always allowed. A STAFF account is allowed only while
