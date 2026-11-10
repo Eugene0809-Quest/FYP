@@ -46,8 +46,11 @@ public class StaffHomeView {
         Label sessionLabel = new Label("Logged in as: " + user.getFullName() + " (" + user.getRole() + ")");
         Button logoutButton = new Button("Log Out");
         logoutButton.setOnAction(e -> onLogout.run());
+        Button changePasswordButton = new Button("Change Password");
+        changePasswordButton.setOnAction(e ->
+                ChangePasswordDialog.show(changePasswordButton.getScene().getWindow(), user));
 
-        HBox topBar = new HBox(15, companyLabel, spacer, sessionLabel, logoutButton);
+        HBox topBar = new HBox(15, companyLabel, spacer, sessionLabel, changePasswordButton, logoutButton);
         topBar.setPadding(new Insets(10, 20, 10, 20));
         topBar.setAlignment(Pos.CENTER_LEFT);
         topBar.getStyleClass().add("topbar");

@@ -60,6 +60,7 @@ public class MainApp extends Application {
     private final DatePicker weekStartPicker = new DatePicker(mondayOf(LocalDate.now()));
     private final BorderPane rosterContent = new BorderPane();
     private final StatusSummaryPane summaryPane = new StatusSummaryPane();
+    private boolean weekListenerAdded = false; // buildRosterTab runs on every admin login
     private static final DateTimeFormatter DMY = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private List<Employee> cachedEmployees;
     private List<Shift> cachedShifts;
@@ -126,13 +127,15 @@ public class MainApp extends Application {
                 "Logged in as: " + loggedInUser.getFullName() + " (" + loggedInUser.getRole() + ")");
         Button logoutButton = new Button("Log Out");
         logoutButton.setOnAction(e -> showLoginScreen(stage));
+        Button changePasswordButton = new Button("Change Password");
+        changePasswordButton.setOnAction(e -> ChangePasswordDialog.show(stage, loggedInUser));
 
         Label companyLabel = new Label(company != null ? company.getCompanyName() : "SmartShift");
         companyLabel.setStyle("-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: white;");
         javafx.scene.layout.Region spacer = new javafx.scene.layout.Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        HBox sessionBar = new HBox(15, companyLabel, spacer, sessionLabel, logoutButton);
+        HBox sessionBar = new HBox(15, companyLabel, spacer, sessionLabel, changePasswordButton, logoutButton);
         sessionBar.setPadding(new Insets(10, 20, 10, 20));
         sessionBar.setAlignment(Pos.CENTER_LEFT);
         sessionBar.getStyleClass().add("topbar");
@@ -185,11 +188,14 @@ public class MainApp extends Application {
                 "The Monday of the week you're generating a roster for - matched against the Public Holidays calendar."));
         // Manual mode: when the week changes, hide people on approved leave for the new week
         // (the screen is not rebuilt, so the other picks are kept).
-        weekStartPicker.valueProperty().addListener((obs, oldV, newV) -> {
-            if (manualRadio.isSelected() && manualPane != null) {
-                refreshManualLeave();
-            }
-        });
+        if (!weekListenerAdded) {
+            weekListenerAdded = true;
+            weekStartPicker.valueProperty().addListener((obs, oldV, newV) -> {
+                if (manualRadio.isSelected() && manualPane != null) {
+                    refreshManualLeave();
+                }
+            });
+        }
 
         Button generateButton = new Button("Generate Roster & Payroll");
         generateButton.getStyleClass().add("primary-button");
@@ -264,7 +270,8 @@ public class MainApp extends Application {
         TableColumn<PayrollRow, String> netPayCol = new TableColumn<>("Net Pay (RM)");
         netPayCol.setCellValueFactory(new PropertyValueFactory<>("netPay"));
 
-        payrollTable.getColumns().addAll(nameCol, hoursCol, otCol, holidayCol, payCol, epfCol, socsoCol, eisCol, netPayCol);
+        // setAll, not addAll: the table is created once but this runs on every admin login
+        payrollTable.getColumns().setAll(nameCol, hoursCol, otCol, holidayCol, payCol, epfCol, socsoCol, eisCol, netPayCol);
     }
 
     /** Loads employees/shifts/availability/holidays fresh from MySQL - called once when this
@@ -718,9 +725,27 @@ public class MainApp extends Application {
             }
         });
 
-        employeeTable.getColumns().addAll(
+        // setAll, not addAll: the table is created once but this runs on every admin login
+        TableColumn<EmployeeRow, Void> loginCol = new TableColumn<>("Login");
+        loginCol.setPrefWidth(130);
+        loginCol.setCellFactory(col -> new TableCell<>() {
+            private final Button loginButton = new Button("Manage Login");
+            {
+                loginButton.setOnAction(e -> {
+                    EmployeeRow row = getTableView().getItems().get(getIndex());
+                    ManageLoginDialog.show(stage, Integer.parseInt(row.getId()), row.getName(), null);
+                });
+            }
+            @Override
+            protected void updateItem(Void item, boolean empty) {
+                super.updateItem(item, empty);
+                setGraphic(empty ? null : loginButton);
+            }
+        });
+
+        employeeTable.getColumns().setAll(
                 idCol, nameCol, departmentCol, jobPositionCol, typeCol, rateCol, maxHoursCol,
-                icCol, epfCol, socsoCol, eisCol, joinedCol, bankCol, availCol, prefCol);
+                icCol, epfCol, socsoCol, eisCol, joinedCol, bankCol, availCol, prefCol, loginCol);
     }
 
     private void openRegistrationDialog(Stage owner) {
