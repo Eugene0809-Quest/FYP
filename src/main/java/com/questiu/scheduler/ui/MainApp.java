@@ -15,6 +15,7 @@ import com.questiu.scheduler.solver.ManualScheduleValidator;
 import com.questiu.scheduler.solver.PreferenceScorer;
 import com.questiu.scheduler.solver.SchedulingEngine;
 import javafx.application.Application;
+import javafx.beans.binding.Bindings;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
@@ -37,6 +38,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -657,8 +659,26 @@ public class MainApp extends Application {
         registerButton.setOnAction(e -> openRegistrationDialog(stage));
         refreshButton.setOnAction(e -> loadEmployeesIntoTable());
 
-        HBox topBar = new HBox(10, registerButton, refreshButton, employeeStatusLabel);
+        Button editButton = new Button("Edit Selected");
+        Button activeButton = new Button();
+        editButton.disableProperty().bind(employeeTable.getSelectionModel().selectedItemProperty().isNull());
+        activeButton.disableProperty().bind(employeeTable.getSelectionModel().selectedItemProperty().isNull());
+        activeButton.textProperty().bind(Bindings.createStringBinding(() -> {
+            EmployeeRow selected = employeeTable.getSelectionModel().getSelectedItem();
+            return selected != null && "Inactive".equals(selected.getStatus())
+                    ? "Reactivate Selected" : "Deactivate Selected";
+        }, employeeTable.getSelectionModel().selectedItemProperty()));
+        editButton.setOnAction(e -> {
+            EmployeeRow selected = employeeTable.getSelectionModel().getSelectedItem();
+            if (selected != null) {
+                EditEmployeeDialog.show(stage, Integer.parseInt(selected.getId()), this::loadEmployeesIntoTable);
+            }
+        });
+        activeButton.setOnAction(e -> toggleSelectedEmployeeActive(stage));
+
+        HBox topBar = new HBox(10, registerButton, editButton, activeButton, refreshButton, employeeStatusLabel);
         topBar.setPadding(new Insets(10));
+        topBar.setAlignment(Pos.CENTER_LEFT);
 
         setupEmployeeTableColumns(stage);
 
@@ -666,6 +686,31 @@ public class MainApp extends Application {
         root.setTop(topBar);
         root.setCenter(employeeTable);
         return root;
+    }
+
+    /** Deactivates the selected employee (or reactivates an inactive one) after a confirmation. Nothing is deleted. */
+    private void toggleSelectedEmployeeActive(Stage stage) {
+        EmployeeRow selected = employeeTable.getSelectionModel().getSelectedItem();
+        if (selected == null) return;
+        boolean makeActive = "Inactive".equals(selected.getStatus());
+
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.initOwner(stage);
+        confirm.setTitle(makeActive ? "Reactivate employee" : "Deactivate employee");
+        confirm.setHeaderText((makeActive ? "Reactivate " : "Deactivate ") + selected.getName() + "?");
+        confirm.setContentText(makeActive
+                ? "They will be included in new rosters again and can log in again."
+                : "They will be left out of new rosters and can no longer log in. "
+                        + "Their saved rosters and payroll are kept. You can reactivate them later.");
+        Optional<ButtonType> choice = confirm.showAndWait();
+        if (choice.isPresent() && choice.get() == ButtonType.OK) {
+            try {
+                new EmployeeDao().setActive(Integer.parseInt(selected.getId()), makeActive);
+                loadEmployeesIntoTable();
+            } catch (Exception ex) {
+                employeeStatusLabel.setText("Error: " + ex.getMessage());
+            }
+        }
     }
 
        private static TableColumn<EmployeeRow, String> textColumn(String title, String property, double width) {
@@ -678,6 +723,7 @@ public class MainApp extends Application {
     private void setupEmployeeTableColumns(Stage stage) {
         TableColumn<EmployeeRow, String> idCol = textColumn("ID", "id", 45);
         TableColumn<EmployeeRow, String> nameCol = textColumn("Name", "name", 170);
+        TableColumn<EmployeeRow, String> statusCol = textColumn("Status", "status", 75);
         TableColumn<EmployeeRow, String> departmentCol = textColumn("Department", "department", 115);
         TableColumn<EmployeeRow, String> jobPositionCol = textColumn("Job Position", "jobPosition", 110);
         TableColumn<EmployeeRow, String> typeCol = textColumn("Type", "type", 85);
@@ -689,6 +735,7 @@ public class MainApp extends Application {
         TableColumn<EmployeeRow, String> eisCol = textColumn("EIS No.", "eisNumber", 115);
         TableColumn<EmployeeRow, String> joinedCol = textColumn("Joined", "dateJoined", 90);
         TableColumn<EmployeeRow, String> bankCol = textColumn("Bank Account", "bankAccount", 110);
+        TableColumn<EmployeeRow, String> usernameCol = textColumn("Username", "loginName", 105);
 
         TableColumn<EmployeeRow, Void> availCol = new TableColumn<>("Availability");
         availCol.setPrefWidth(130);
@@ -733,7 +780,8 @@ public class MainApp extends Application {
             {
                 loginButton.setOnAction(e -> {
                     EmployeeRow row = getTableView().getItems().get(getIndex());
-                    ManageLoginDialog.show(stage, Integer.parseInt(row.getId()), row.getName(), null);
+                    ManageLoginDialog.show(stage, Integer.parseInt(row.getId()), row.getName(),
+                            MainApp.this::loadEmployeesIntoTable);
                 });
             }
             @Override
@@ -743,9 +791,18 @@ public class MainApp extends Application {
             }
         });
 
+        // Inactive employees are shown greyed out
+        employeeTable.setRowFactory(tv -> new TableRow<>() {
+            @Override
+            protected void updateItem(EmployeeRow item, boolean empty) {
+                super.updateItem(item, empty);
+                setStyle(!empty && item != null && "Inactive".equals(item.getStatus()) ? "-fx-opacity: 0.5;" : "");
+            }
+        });
+
         employeeTable.getColumns().setAll(
-                idCol, nameCol, departmentCol, jobPositionCol, typeCol, rateCol, maxHoursCol,
-                icCol, epfCol, socsoCol, eisCol, joinedCol, bankCol, availCol, prefCol, loginCol);
+                idCol, nameCol, statusCol, departmentCol, jobPositionCol, typeCol, rateCol, maxHoursCol,
+                icCol, epfCol, socsoCol, eisCol, joinedCol, bankCol, usernameCol, availCol, prefCol, loginCol);
     }
 
     private void openRegistrationDialog(Stage owner) {
@@ -772,6 +829,7 @@ public class MainApp extends Application {
                 roleNamesById = roles.stream()
                         .collect(Collectors.toMap(Role::getRoleId, Role::getRoleName));
                 Map<Integer, String> positionNamesById = new com.questiu.scheduler.dao.JobPositionDao().findNamesById();
+                Map<Integer, String> usernames = new com.questiu.scheduler.dao.UserDao().findUsernamesByEmployeeId();
                 List<Employee> employees = new EmployeeDao().findAll();
 
                 ObservableList<EmployeeRow> rows = FXCollections.observableArrayList();
@@ -792,7 +850,9 @@ public class MainApp extends Application {
                             orBlank(e.getEpfNumber()),
                             orBlank(e.getSocsoNumber()),
                             orBlank(e.getEisNumber()),
-                            e.getDateJoined() == null ? "" : e.getDateJoined().toString()
+                            e.getDateJoined() == null ? "" : e.getDateJoined().toString(),
+                            e.isActive() ? "Active" : "Inactive",
+                            usernames.getOrDefault(e.getEmployeeId(), "(none)")
                     ));
                 }
                 javafx.application.Platform.runLater(() -> {
@@ -841,12 +901,12 @@ public class MainApp extends Application {
 
         public static class EmployeeRow {
         private final String id, name, department, jobPosition, type, rate, maxHours, bankAccount,
-                icNumber, epfNumber, socsoNumber, eisNumber, dateJoined;
+                icNumber, epfNumber, socsoNumber, eisNumber, dateJoined, status, loginName;
 
         public EmployeeRow(String id, String name, String department, String jobPosition, String type,
                             String rate, String maxHours, String bankAccount,
                             String icNumber, String epfNumber, String socsoNumber,
-                            String eisNumber, String dateJoined) {
+                            String eisNumber, String dateJoined, String status, String loginName) {
             this.id = id;
             this.name = name;
             this.department = department;
@@ -860,6 +920,8 @@ public class MainApp extends Application {
             this.socsoNumber = socsoNumber;
             this.eisNumber = eisNumber;
             this.dateJoined = dateJoined;
+            this.status = status;
+            this.loginName = loginName;
         }
 
         public String getId() { return id; }
@@ -875,5 +937,7 @@ public class MainApp extends Application {
         public String getSocsoNumber() { return socsoNumber; }
         public String getEisNumber() { return eisNumber; }
         public String getDateJoined() { return dateJoined; }
+        public String getStatus() { return status; }
+        public String getLoginName() { return loginName; }
     }
 }

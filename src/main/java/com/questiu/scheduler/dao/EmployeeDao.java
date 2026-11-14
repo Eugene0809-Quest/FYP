@@ -111,6 +111,71 @@ public class EmployeeDao {
         }
     }
 
+    /**
+     * Saves changes to an existing employee (FYP2: edit employee). The department
+     * (role_id) and the active flag are NOT changed here: the department is locked
+     * because shifts, availability and rosters depend on it, and activating or
+     * deactivating has its own method. If the employee has a login, the name copied
+     * into that login is kept in step, in the same transaction.
+     */
+    public void update(Employee emp) throws SQLException {
+        String employeeSql = "UPDATE employee SET job_position_id = ?, full_name = ?, ic_number = ?, " +
+                "bank_account_number = ?, epf_number = ?, socso_number = ?, eis_number = ?, " +
+                "employment_type = ?, date_joined = ?, hourly_rate = ?, max_hours_week = ? " +
+                "WHERE employee_id = ?";
+        String loginSql = "UPDATE user_account SET full_name = ? WHERE employee_id = ?";
+        try (Connection conn = DatabaseConnection.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                try (PreparedStatement ps = conn.prepareStatement(employeeSql)) {
+                    ps.setObject(1, emp.getJobPositionId(), Types.INTEGER);
+                    ps.setString(2, emp.getFullName());
+                    ps.setString(3, emp.getIcNumber());
+                    ps.setString(4, emp.getBankAccountNumber());
+                    ps.setString(5, emp.getEpfNumber());
+                    ps.setString(6, emp.getSocsoNumber());
+                    ps.setString(7, emp.getEisNumber());
+                    ps.setString(8, emp.getEmploymentType().name());
+                    if (emp.getDateJoined() == null) {
+                        ps.setNull(9, Types.DATE);
+                    } else {
+                        ps.setDate(9, Date.valueOf(emp.getDateJoined()));
+                    }
+                    ps.setBigDecimal(10, emp.getHourlyRate());
+                    ps.setBigDecimal(11, emp.getMaxWeeklyHours());
+                    ps.setInt(12, emp.getEmployeeId());
+                    ps.executeUpdate();
+                }
+                try (PreparedStatement ps = conn.prepareStatement(loginSql)) {
+                    ps.setString(1, emp.getFullName());
+                    ps.setInt(2, emp.getEmployeeId());
+                    ps.executeUpdate();
+                }
+                conn.commit();
+            } catch (SQLException ex) {
+                conn.rollback();
+                throw ex;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
+    /**
+     * Deactivates or reactivates an employee. Nothing is deleted: saved rosters and
+     * payroll stay. A deactivated employee is left out of new rosters
+     * (findAllActive) and cannot log in (UserDao.isLoginAllowed).
+     */
+    public void setActive(int employeeId, boolean active) throws SQLException {
+        String sql = "UPDATE employee SET is_active = ? WHERE employee_id = ?";
+        try (Connection conn = DatabaseConnection.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setBoolean(1, active);
+            ps.setInt(2, employeeId);
+            ps.executeUpdate();
+        }
+    }
+
     private int insertEmployee(Connection conn, Employee emp) throws SQLException {
         String sql = "INSERT INTO employee (role_id, job_position_id, full_name, ic_number, " +
                      "bank_account_number, epf_number, socso_number, eis_number, employment_type, " +

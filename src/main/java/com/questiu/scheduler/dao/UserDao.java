@@ -48,6 +48,20 @@ public class UserDao {
         return null;
     }
 
+    /** employee_id -> username for every employee that has a login (used by the Employees table). */
+    public java.util.Map<Integer, String> findUsernamesByEmployeeId() throws SQLException {
+        java.util.Map<Integer, String> result = new java.util.HashMap<>();
+        String sql = "SELECT employee_id, username FROM user_account WHERE employee_id IS NOT NULL";
+        try (Connection conn = DatabaseConnection.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                result.put(rs.getInt("employee_id"), rs.getString("username"));
+            }
+        }
+        return result;
+    }
+
     /** Stores a new (already hashed) password for a login. */
     public void updatePasswordHash(int userId, String newPasswordHash) throws SQLException {
         String sql = "UPDATE user_account SET password_hash = ? WHERE user_id = ?";
