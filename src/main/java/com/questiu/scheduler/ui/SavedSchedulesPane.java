@@ -110,10 +110,18 @@ public final class SavedSchedulesPane extends VBox {
         unpublishButton.setDisable(none || !published);
     }
 
+    /** Refresh button and first load: reload the list and clear any old message. */
     private void reload() {
+        reload(true);
+    }
+
+    /** After Publish / Unpublish the list is refreshed but the result message must stay visible. */
+    private void reload(boolean clearMessage) {
         try {
             table.setItems(FXCollections.observableArrayList(dao.findSchedules()));
-            message.setText("");
+            if (clearMessage) {
+                message.setText("");
+            }
         } catch (Exception ex) {
             showMessage("Could not load schedules: " + ex.getMessage(), true);
         }
@@ -127,19 +135,26 @@ public final class SavedSchedulesPane extends VBox {
                         + ") to staff?\nAny schedule already published for that week will be replaced.",
                 ButtonType.OK, ButtonType.CANCEL);
         confirm.setHeaderText("Publish schedule");
+        fitToText(confirm);
         Optional<ButtonType> answer = confirm.showAndWait();
         if (answer.isEmpty() || answer.get() != ButtonType.OK) return;
+        doPublish(sel);
+    }
+
+    private void doPublish(ScheduleSummary sel) {
         try {
             int replaced = dao.approve(sel.getScheduleId());
-            if (replaced < 0) {
-                showMessage("Schedule #" + sel.getScheduleId()
-                        + " could not be published (it may already be published or have no shifts).", true);
+            String text;
+            boolean error = replaced < 0;
+            if (error) {
+                text = "Schedule #" + sel.getScheduleId()
+                        + " could not be published (it may already be published or have no shifts).";
             } else {
-                showMessage("Published schedule #" + sel.getScheduleId() + " to staff."
-                        + (replaced > 0 ? " " + replaced + " earlier schedule(s) for that week were replaced." : ""),
-                        false);
+                text = "Published schedule #" + sel.getScheduleId() + " to staff."
+                        + (replaced > 0 ? " " + replaced + " earlier schedule(s) for that week were replaced." : "");
             }
-            reload();
+            reload(false);              // refresh the list but keep the message we are about to show
+            showMessage(text, error);
         } catch (Exception ex) {
             showMessage("Could not publish: " + ex.getMessage(), true);
         }
@@ -147,11 +162,32 @@ public final class SavedSchedulesPane extends VBox {
 
     private void unpublish(ScheduleSummary sel) {
         if (sel == null) return;
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
+                "Stop showing schedule #" + sel.getScheduleId() + " (week starting "
+                        + DMY.format(sel.getWeekStart()) + ") to staff?\n"
+                        + "Staff will no longer see it and its status goes back to Draft. "
+                        + "The shifts and payroll are kept, and you can publish it again.",
+                ButtonType.OK, ButtonType.CANCEL);
+        confirm.setHeaderText("Unpublish schedule");
+        fitToText(confirm);
+        Optional<ButtonType> answer = confirm.showAndWait();
+        if (answer.isEmpty() || answer.get() != ButtonType.OK) return;
+        doUnpublish(sel);
+    }
+
+    /** Lets a confirmation dialog grow to fit its whole text instead of cutting it off with "...". */
+    private static void fitToText(Alert alert) {
+        alert.getDialogPane().setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+        alert.getDialogPane().setMinWidth(javafx.scene.layout.Region.USE_PREF_SIZE);
+    }
+
+    private void doUnpublish(ScheduleSummary sel) {
         try {
             boolean ok = dao.unpublish(sel.getScheduleId());
-            showMessage(ok ? "Schedule #" + sel.getScheduleId() + " is no longer visible to staff."
-                           : "That schedule was not published.", !ok);
-            reload();
+            String text = ok ? "Schedule #" + sel.getScheduleId() + " is no longer visible to staff."
+                             : "That schedule was not published.";
+            reload(false);              // refresh the list but keep the message we are about to show
+            showMessage(text, !ok);
         } catch (Exception ex) {
             showMessage("Could not unpublish: " + ex.getMessage(), true);
         }

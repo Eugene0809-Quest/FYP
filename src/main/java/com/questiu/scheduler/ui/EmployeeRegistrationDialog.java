@@ -265,6 +265,9 @@ public class EmployeeRegistrationDialog {
         notice.setContentText("Username: " + username + "\n\n"
                 + "Give the employee this username and the initial password you typed. "
                 + "The password is not shown again.");
+        // let the pop-up grow to fit its whole text instead of cutting it off with "..."
+        notice.getDialogPane().setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+        notice.getDialogPane().setMinWidth(javafx.scene.layout.Region.USE_PREF_SIZE);
         notice.show();
     }
 
