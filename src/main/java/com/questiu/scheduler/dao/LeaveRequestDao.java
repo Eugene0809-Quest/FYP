@@ -169,6 +169,30 @@ public class LeaveRequestDao {
         }
     }
 
+    /**
+     * An administrator cancels leave that was already APPROVED (for example the
+     * staff member no longer needs it, or it was recorded by mistake). The row is
+     * kept with status CANCELLED, not deleted, so there is still a record of it.
+     * Decided by / decided at now show the administrator who cancelled it, and the
+     * note explains why. Because the roster only reads APPROVED leave, the person
+     * becomes available again the next time a roster is generated.
+     *
+     * Guarded by the current status like every other change here: returns false if
+     * the request was no longer APPROVED (already cancelled by someone else).
+     */
+    public boolean cancelApproved(int leaveId, int adminUserId, String adminNote) throws SQLException {
+        String sql = "UPDATE leave_request SET status = 'CANCELLED', decided_by = ?, decided_at = ?, " +
+                     "admin_note = ? WHERE leave_id = ? AND status = 'APPROVED'";
+        try (Connection conn = DatabaseConnection.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, adminUserId);
+            ps.setTimestamp(2, Timestamp.valueOf(LocalDateTime.now()));
+            ps.setString(3, adminNote);
+            ps.setInt(4, leaveId);
+            return ps.executeUpdate() == 1;
+        }
+    }
+
     private LeaveRequest mapRow(ResultSet rs) throws SQLException {
         Timestamp requested = rs.getTimestamp("requested_at");
         Timestamp decided = rs.getTimestamp("decided_at");

@@ -30,7 +30,8 @@ import java.util.function.Function;
  * the administrator approves or not, or does everything). The administrator
  * sees every request, approves or rejects pending ones (with an optional
  * note), and can record leave for a staff member directly, saved as already
- * approved - for example when the request arrives by phone.
+ * approved - for example when the request arrives by phone. Approved leave
+ * can also be cancelled again (the row is kept, with status Cancelled).
  */
 public class AdminLeavePane {
 
@@ -81,12 +82,15 @@ public class AdminLeavePane {
         decisionCol.setCellFactory(col -> new TableCell<>() {
             private final Button approveButton = new Button("Approve");
             private final Button rejectButton = new Button("Reject");
+            private final Button cancelLeaveButton = new Button("Cancel Leave");
             private final HBox buttons = new HBox(6, approveButton, rejectButton);
             {
                 approveButton.setOnAction(e ->
                         approve(getTableView().getItems().get(getIndex()), admin, message, reload));
                 rejectButton.setOnAction(e ->
                         reject(getTableView().getItems().get(getIndex()), admin, message, reload));
+                cancelLeaveButton.setOnAction(e ->
+                        cancelApproved(getTableView().getItems().get(getIndex()), admin, message, reload));
             }
             @Override
             protected void updateItem(Void item, boolean empty) {
@@ -96,7 +100,13 @@ public class AdminLeavePane {
                     return;
                 }
                 LeaveRequest r = getTableView().getItems().get(getIndex());
-                setGraphic(r.getStatus() == LeaveStatus.PENDING ? buttons : null);
+                if (r.getStatus() == LeaveStatus.PENDING) {
+                    setGraphic(buttons);
+                } else if (r.getStatus() == LeaveStatus.APPROVED) {
+                    setGraphic(cancelLeaveButton);
+                } else {
+                    setGraphic(null);
+                }
             }
         });
         table.getColumns().add(decisionCol);
@@ -137,6 +147,40 @@ public class AdminLeavePane {
                     : "That request is no longer pending (it was already decided or cancelled).", done);
         } catch (Exception ex) {
             show(message, "Could not reject: " + ex.getMessage(), false);
+        }
+        reload.run();
+    }
+
+    /**
+     * Cancels leave that was already approved. Asks first, because it changes who
+     * the roster treats as available. Saved rosters are NOT changed by this: only
+     * the next roster that is generated sees the person as available again.
+     */
+    private static void cancelApproved(LeaveRequest r, User admin, Label message, Runnable reload) {
+        TextInputDialog dialog = new TextInputDialog();
+        dialog.setTitle("Cancel approved leave");
+        dialog.setHeaderText("Cancel " + r.getEmployeeName() + "'s approved leave ("
+                + DMY.format(r.getStartDate()) + " to " + DMY.format(r.getEndDate()) + ")?\n"
+                + "The request stays in the list with status Cancelled. "
+                + r.getEmployeeName() + " becomes available for those days the next time you "
+                + "generate a roster.\nRosters that are already saved or published are not changed.");
+        dialog.setContentText("Reason (optional):");
+        dialog.getDialogPane().setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+        dialog.getDialogPane().setMinWidth(javafx.scene.layout.Region.USE_PREF_SIZE);
+        Optional<String> answer = dialog.showAndWait();
+        if (answer.isEmpty()) return; // the administrator closed the dialog: do nothing
+        String reason = blankToNull(answer.get());
+        String note = reason == null ? "Cancelled by administrator" : "Cancelled by administrator: " + reason;
+        if (note.length() > 255) {
+            show(message, "The reason is too long (at most about 225 characters). Nothing was changed.", false);
+            return;
+        }
+        try {
+            boolean done = new LeaveRequestDao().cancelApproved(r.getLeaveId(), admin.getUserId(), note);
+            show(message, done ? "Cancelled " + r.getEmployeeName() + "'s approved leave."
+                    : "That leave is no longer approved (it was already cancelled).", done);
+        } catch (Exception ex) {
+            show(message, "Could not cancel the leave: " + ex.getMessage(), false);
         }
         reload.run();
     }
