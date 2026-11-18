@@ -122,7 +122,7 @@ public class MainApp extends Application {
         tabs.getTabs().add(new Tab("Employees", buildEmployeesTab(stage)));
         tabs.getTabs().add(new Tab("Public Holidays", new PublicHolidayPane()));
         tabs.getTabs().add(new Tab("Leave Requests", AdminLeavePane.build(loggedInUser)));
-        tabs.getTabs().add(new Tab("Saved Schedules", new SavedSchedulesPane()));
+        tabs.getTabs().add(new Tab("Saved Schedules", new SavedSchedulesPane(loggedInUser)));
         tabs.getTabs().forEach(t -> t.setClosable(false));
 
         Label sessionLabel = new Label(

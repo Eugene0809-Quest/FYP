@@ -4,9 +4,10 @@
 --
 -- CONSOLIDATED SCHEMA (20 tables). For a NEW database this single
 -- file is enough: it already includes what migrations 002, 004, 005,
--- 007 and 008 added (employee registration fields, public_holiday
+-- 007, 008 and 009 added (employee registration fields, public_holiday
 -- table, extended payroll_record, company profile, employee statutory
--- numbers, staff login link, leave requests, job positions). Seed data
+-- numbers, staff login link, leave requests, job positions, who
+-- published a roster and when). Seed data
 -- lives in seed_smartshift_n5.sql.
 -- The files in sql/migrations/ are kept only as history for databases
 -- that were built before this consolidation.
@@ -168,8 +169,13 @@ CREATE TABLE schedule (
     objective_value   DECIMAL(12,2),
     generated_by      INT,
     generated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    published_by      INT NULL,
+    published_at      DATETIME NULL,
     CONSTRAINT fk_schedule_user
         FOREIGN KEY (generated_by) REFERENCES user_account(user_id)
+        ON UPDATE CASCADE ON DELETE SET NULL,
+    CONSTRAINT fk_schedule_published_by
+        FOREIGN KEY (published_by) REFERENCES user_account(user_id)
         ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB;
 

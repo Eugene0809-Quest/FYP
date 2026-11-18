@@ -3,6 +3,7 @@ package com.questiu.scheduler.ui;
 import com.questiu.scheduler.dao.ScheduleViewDao;
 import com.questiu.scheduler.dao.ScheduleViewDao.ScheduleSummary;
 import com.questiu.scheduler.dao.ScheduleViewDao.ShiftRow;
+import com.questiu.scheduler.model.User;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
@@ -39,6 +40,7 @@ public final class SavedSchedulesPane extends VBox {
     private static final DateTimeFormatter HM = DateTimeFormatter.ofPattern("HH:mm");
     private static final String STYLESHEET = "/css/app.css";
 
+    private final User admin;
     private final ScheduleViewDao dao = new ScheduleViewDao();
     private final TableView<ScheduleSummary> table = new TableView<>();
     private final Label message = new Label();
@@ -46,7 +48,8 @@ public final class SavedSchedulesPane extends VBox {
     private final Button publishButton = new Button("Approve & Publish to Staff");
     private final Button unpublishButton = new Button("Unpublish");
 
-    public SavedSchedulesPane() {
+    public SavedSchedulesPane(User admin) {
+        this.admin = admin;
         setSpacing(12);
         setPadding(new Insets(20));
 
@@ -71,7 +74,13 @@ public final class SavedSchedulesPane extends VBox {
         table.getColumns().add(statusCol);
         table.getColumns().add(countCol);
         table.getColumns().add(byCol);
+        TableColumn<ScheduleSummary, String> pubByCol = column("Published by", 150,
+                s -> s.getPublishedBy() == null ? "" : s.getPublishedBy());
+        TableColumn<ScheduleSummary, String> pubAtCol = column("Published at", 140,
+                s -> s.getPublishedAt() == null ? "" : DMY_TIME.format(s.getPublishedAt()));
         table.getColumns().add(atCol);
+        table.getColumns().add(pubByCol);
+        table.getColumns().add(pubAtCol);
         VBox.setVgrow(table, Priority.ALWAYS);
 
         Button refreshButton = new Button("Refresh");
@@ -143,7 +152,7 @@ public final class SavedSchedulesPane extends VBox {
 
     private void doPublish(ScheduleSummary sel) {
         try {
-            int replaced = dao.approve(sel.getScheduleId());
+            int replaced = dao.approve(sel.getScheduleId(), admin.getUserId());
             String text;
             boolean error = replaced < 0;
             if (error) {

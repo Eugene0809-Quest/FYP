@@ -30,15 +30,20 @@ public class ScheduleViewDao {
         private final LocalDateTime savedAt;
         private final String savedBy;
         private final int assignmentCount;
+        private final String publishedBy;
+        private final LocalDateTime publishedAt;
 
         public ScheduleSummary(int scheduleId, LocalDate weekStart, String status,
-                               LocalDateTime savedAt, String savedBy, int assignmentCount) {
+                               LocalDateTime savedAt, String savedBy, int assignmentCount,
+                               String publishedBy, LocalDateTime publishedAt) {
             this.scheduleId = scheduleId;
             this.weekStart = weekStart;
             this.status = status;
             this.savedAt = savedAt;
             this.savedBy = savedBy;
             this.assignmentCount = assignmentCount;
+            this.publishedBy = publishedBy;
+            this.publishedAt = publishedAt;
         }
 
         public int getScheduleId() { return scheduleId; }
@@ -47,6 +52,9 @@ public class ScheduleViewDao {
         public LocalDateTime getSavedAt() { return savedAt; }
         public String getSavedBy() { return savedBy; }
         public int getAssignmentCount() { return assignmentCount; }
+        /** Who published it and when; null unless currently published (or published before migration 009). */
+        public String getPublishedBy() { return publishedBy; }
+        public LocalDateTime getPublishedAt() { return publishedAt; }
     }
 
     /** One employee working one shift on one calendar date. */
@@ -99,8 +107,10 @@ public class ScheduleViewDao {
     public List<ScheduleSummary> findSchedules() throws SQLException {
         String sql = "SELECT s.schedule_id, s.week_start_date, s.status, s.generated_at, " +
                      "u.full_name AS saved_by, " +
-                     "(SELECT COUNT(*) FROM schedule_assignment a WHERE a.schedule_id = s.schedule_id) AS assignment_count " +
+                     "(SELECT COUNT(*) FROM schedule_assignment a WHERE a.schedule_id = s.schedule_id) AS assignment_count, " +
+                     "p.full_name AS published_by_name, s.published_at " +
                      "FROM schedule s LEFT JOIN user_account u ON u.user_id = s.generated_by " +
+                     "LEFT JOIN user_account p ON p.user_id = s.published_by " +
                      "ORDER BY s.week_start_date DESC, s.schedule_id DESC";
         List<ScheduleSummary> result = new ArrayList<>();
         try (Connection conn = DatabaseConnection.getConnection();
@@ -108,13 +118,16 @@ public class ScheduleViewDao {
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 java.sql.Timestamp saved = rs.getTimestamp("generated_at");
+                java.sql.Timestamp publishedAt = rs.getTimestamp("published_at");
                 result.add(new ScheduleSummary(
                         rs.getInt("schedule_id"),
                         rs.getDate("week_start_date").toLocalDate(),
                         rs.getString("status"),
                         saved == null ? null : saved.toLocalDateTime(),
                         rs.getString("saved_by"),
-                        rs.getInt("assignment_count")));
+                        rs.getInt("assignment_count"),
+                        rs.getString("published_by_name"),
+                        publishedAt == null ? null : publishedAt.toLocalDateTime()));
             }
         }
         return result;
@@ -159,12 +172,13 @@ public class ScheduleViewDao {
      * Publishes a schedule to staff. Only one schedule per week can be
      * published, so any other APPROVED schedule for the same week goes back to
      * DRAFT in the same transaction. A schedule with no assignments, or one
-     * that is already APPROVED, is refused.
+     * that is already APPROVED, is refused. The administrator who published it
+     * and the time are stored on the schedule (migration 009).
      *
      * @return the number of earlier schedules that were replaced (0 or more),
      *         or -1 if this schedule could not be published
      */
-    public int approve(int scheduleId) throws SQLException {
+    public int approve(int scheduleId, int publishedByUserId) throws SQLException {
         try (Connection conn = DatabaseConnection.getConnection()) {
             conn.setAutoCommit(false);
             try {
@@ -182,7 +196,7 @@ public class ScheduleViewDao {
                 }
                 int replaced;
                 try (PreparedStatement ps = conn.prepareStatement(
-                        "UPDATE schedule SET status = 'DRAFT' " +
+                        "UPDATE schedule SET status = 'DRAFT', published_by = NULL, published_at = NULL " +
                         "WHERE week_start_date = ? AND status = 'APPROVED' AND schedule_id <> ?")) {
                     ps.setDate(1, java.sql.Date.valueOf(weekStart));
                     ps.setInt(2, scheduleId);
@@ -190,11 +204,13 @@ public class ScheduleViewDao {
                 }
                 int approved;
                 try (PreparedStatement ps = conn.prepareStatement(
-                        "UPDATE schedule SET status = 'APPROVED' " +
+                        "UPDATE schedule SET status = 'APPROVED', published_by = ?, published_at = ? " +
                         "WHERE schedule_id = ? AND status IN ('DRAFT','GENERATED') " +
                         "AND EXISTS (SELECT 1 FROM schedule_assignment sa WHERE sa.schedule_id = ?)")) {
-                    ps.setInt(1, scheduleId);
-                    ps.setInt(2, scheduleId);
+                    ps.setInt(1, publishedByUserId);
+                    ps.setTimestamp(2, java.sql.Timestamp.valueOf(LocalDateTime.now()));
+                    ps.setInt(3, scheduleId);
+                    ps.setInt(4, scheduleId);
                     approved = ps.executeUpdate();
                 }
                 if (approved != 1) {
@@ -216,7 +232,8 @@ public class ScheduleViewDao {
     public boolean unpublish(int scheduleId) throws SQLException {
         try (Connection conn = DatabaseConnection.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "UPDATE schedule SET status = 'DRAFT' WHERE schedule_id = ? AND status = 'APPROVED'")) {
+                     "UPDATE schedule SET status = 'DRAFT', published_by = NULL, published_at = NULL " +
+                     "WHERE schedule_id = ? AND status = 'APPROVED'")) {
             ps.setInt(1, scheduleId);
             return ps.executeUpdate() == 1;
         }
