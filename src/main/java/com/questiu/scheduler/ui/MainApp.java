@@ -460,7 +460,7 @@ public class MainApp extends Application {
                 List<Preference> preferences = new PreferenceDao().findAll();
                 System.out.println("[UI] Loaded " + preferences.size() + " shift preferences");
                 SchedulingEngine.SolveResult result = new SchedulingEngine()
-                        .solve(employees, shifts, usableAvailability, preferences, 10.0);
+                        .solve(employees, shifts, usableAvailability, preferences, weekStart, publicHolidays, 10.0);
                 System.out.println("[UI] Solve returned. Status: " + result.status);
 
                 if (!result.isFeasible()) {

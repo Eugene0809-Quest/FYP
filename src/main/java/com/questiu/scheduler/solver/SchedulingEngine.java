@@ -14,6 +14,7 @@ import com.questiu.scheduler.model.Preference;
 import com.questiu.scheduler.model.RosterAssignment;
 import com.questiu.scheduler.model.Shift;
 
+import java.time.LocalDate;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -37,10 +38,17 @@ import java.util.stream.Collectors;
  *   position - so the solver left shifts unfilled instead. See
  *   SchedulingEngineCoverageTest.) Workload spreading is handled separately by
  *   the WorkloadImbalance term.
- * - Labour cost term is hours-proportional and does not use hourly_rate, so the
- *   solver does not yet minimise payroll expenditure (planned for FYP2).
+ * - The labour-cost term is each employee's gross pay for the shift (hourly rate x
+ *   hours, doubled on a public holiday), in sen - see LabourCost. It is gross pay
+ *   only: employer EPF/SOCSO/EIS are not proportional to gross, so this is close to,
+ *   not exactly, the employer's total cost. Callers that do not pass the week start
+ *   and holiday dates (the 4- and 5-argument overloads) get no holiday doubling.
  * - All objective weights are compile-time constants; the objective_weight table
- *   is not read yet.
+ *   is not read yet. They are all read in sen: coverage (an unfilled position, at
+ *   least RM10,000) far above everything; then cost, workload spread (RM5 per hour
+ *   of difference between the most and least loaded person in a role) and
+ *   preferences (RM2 per preference level). A preference therefore only beats a
+ *   cost difference smaller than its value, which is a policy choice to tune in FYP2.
  */
 public class SchedulingEngine {
 
@@ -74,8 +82,22 @@ public class SchedulingEngine {
         return solve(employees, shifts, availability, List.of(), maxSolveTimeSeconds);
     }
 
+    /** Solves with preferences but without public holidays (no holiday doubling in the cost). */
     public SolveResult solve(List<Employee> employees, List<Shift> shifts,
                              List<Availability> availability, List<Preference> preferences,
+                             double maxSolveTimeSeconds) {
+        return solve(employees, shifts, availability, preferences, null, Set.of(), maxSolveTimeSeconds);
+    }
+
+    /**
+     * Full solve. weekStartDate and publicHolidays let the labour-cost term know
+     * which shifts are paid at the holiday rate (a shift's calendar date is
+     * weekStartDate + dayOfWeek - 1, the same rule PayrollCalculator uses).
+     * Pass null / an empty set to ignore holidays.
+     */
+    public SolveResult solve(List<Employee> employees, List<Shift> shifts,
+                             List<Availability> availability, List<Preference> preferences,
+                             LocalDate weekStartDate, Set<LocalDate> publicHolidays,
                              double maxSolveTimeSeconds) {
 
         long startTime = System.currentTimeMillis();
@@ -155,12 +177,28 @@ public class SchedulingEngine {
         // ---- Objective Z: Weighted Multi-Objective (Section 3.4.4) ----
         LinearExprBuilder objective = LinearExpr.newBuilder();
 
-        // 1. Unfilled shifts penalty (lambda_1 dominant weight to ensure coverage first)
-        for (IntVar u : unfilled.values()) {
-            objective.addTerm(u, 10000);
+        // Cost of every possible (employee, shift) pair, in sen: rate x hours, doubled on a holiday.
+        Map<String, Long> positionCost = new HashMap<>();
+        long maxPositionCost = 0;
+        for (Employee e : employees) {
+            for (Shift s : shifts) {
+                boolean holiday = weekStartDate != null && publicHolidays != null
+                        && publicHolidays.contains(s.actualDate(weekStartDate));
+                long c = LabourCost.positionCostSen(e, s, holiday);
+                positionCost.put(key(e.getEmployeeId(), s.getShiftId()), c);
+                maxPositionCost = Math.max(maxPositionCost, c);
+            }
         }
 
-        // Track employee hours for cost and overtime minimization
+        // 1. Unfilled shifts penalty (lambda_1 dominant weight to ensure coverage first).
+        // Always larger than the cost of filling any position, so the solver never leaves a
+        // shift empty just to save wages (see LabourCost.unfilledPenalty).
+        long unfilledPenalty = LabourCost.unfilledPenalty(maxPositionCost);
+        for (IntVar u : unfilled.values()) {
+            objective.addTerm(u, unfilledPenalty);
+        }
+
+        // Per employee: overtime variable (inert) and labour cost
         for (Employee e : employees) {
             // 2. Overtime penalty (lambda_3): KNOWN LIMITATION, permanently a
             // no-op under Automatic mode - see class javadoc. The threshold equals
@@ -180,10 +218,14 @@ public class SchedulingEngine {
 
             objective.addTerm(otVar, 100); // Weight for overtime hours
 
-            // 3. Labor cost proxy penalty (lambda_2): proportional to total hours worked
+            // 3. Labour cost (lambda_2): the gross pay for each assignment, in sen. Unlike the
+            // old hours-proportional proxy this differs between employees (their hourly
+            // rates) and between normal and public-holiday shifts, so the solver can now
+            // prefer a cheaper roster over a dearer one that covers the same shifts.
             for (Shift s : shifts) {
-                long costCoeff = Math.round(s.durationHours() * 10);
-                objective.addTerm(x.get(key(e.getEmployeeId(), s.getShiftId())), costCoeff);
+                String k = key(e.getEmployeeId(), s.getShiftId());
+                long costCoeff = positionCost.get(k); // primitive long, like every other addTerm in this file
+                objective.addTerm(x.get(k), costCoeff);
             }
         }
 
@@ -233,10 +275,12 @@ public class SchedulingEngine {
         // penalty, "prefer"/"strongly prefer" give a reward (negative cost).
         // Coverage is an equality (assigned + unfilled = needed), so rewards can
         // never make the solver over-staff a shift - they only influence WHO fills it.
-        // Weight 200 per level unit: well below the unfilled-demand weight (10000),
-        // so coverage always wins, but above the labour-cost proxy (about 40 per
-        // 4h shift), so a preference can actually tip the choice. Tunable; not yet
-        // read from the objective_weight table.
+        // Weight 200 per level unit = RM2.00 (the objective is in sen): far below the
+        // unfilled-demand weight, so coverage always wins. Labour cost is now real pay,
+        // so a preference only tips the choice between employees whose cost for the
+        // shift differs by less than it is worth (RM2 per level); e.g. it cannot win
+        // against a RM28 holiday-pay difference. Tunable; not yet read from the
+        // objective_weight table.
         final long PREFERENCE_WEIGHT = 200;
         for (Preference p : preferences) {
             com.google.ortools.sat.BoolVar var = x.get(key(p.getEmployeeId(), p.getShiftId()));
