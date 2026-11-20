@@ -77,6 +77,7 @@ public class MainApp extends Application {
     private Map<Integer, Shift> lastShiftsById;
     private LocalDate lastWeekStart;
     private String lastScheduleStatus; // 'GENERATED' (Automatic) or 'DRAFT' (Manual)
+    private Double lastObjectiveValue; // solver objective in RM-equivalent (Automatic); null for Manual
 
     // --- Employees tab ---
     private final TableView<EmployeeRow> employeeTable = new TableView<>();
@@ -509,6 +510,7 @@ public class MainApp extends Application {
                     lastShiftsById = shiftsById;
                     lastWeekStart = weekStart;
                     lastScheduleStatus = "GENERATED";
+                    lastObjectiveValue = result.objectiveValueRm();
                     saveButton.setDisable(false);
                 });
                 System.out.println("[UI] Done.");
@@ -602,6 +604,7 @@ public class MainApp extends Application {
         lastShiftsById = shiftsById;
         lastWeekStart = weekStart;
         lastScheduleStatus = "DRAFT";
+        lastObjectiveValue = null; // a hand-built roster has no solver objective
         saveButton.setDisable(false);
     }
 
@@ -623,6 +626,7 @@ public class MainApp extends Application {
         final Map<Integer, Shift> shiftsByIdToSave = lastShiftsById;
         final LocalDate weekStartToSave = lastWeekStart;
         final String statusToSave = lastScheduleStatus;
+        final Double objectiveToSave = lastObjectiveValue;
         final Integer userId = currentUser != null ? currentUser.getUserId() : null;
 
         saveButton.setDisable(true);
@@ -630,7 +634,7 @@ public class MainApp extends Application {
 
         Thread worker = new Thread(() -> {
             try {
-                int scheduleId = new ScheduleDao().create(weekStartToSave, statusToSave, null, userId);
+                int scheduleId = new ScheduleDao().create(weekStartToSave, statusToSave, objectiveToSave, userId);
                 new ScheduleAssignmentDao().saveAll(scheduleId, assignmentsToSave, shiftsByIdToSave);
                 new PayrollRecordDao().saveAll(scheduleId, payrollToSave);
                 javafx.application.Platform.runLater(() -> {

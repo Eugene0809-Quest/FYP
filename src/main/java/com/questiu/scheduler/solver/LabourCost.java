@@ -49,6 +49,15 @@ public final class LabourCost {
      * expensive shifts, ten times the dearest single position.
      */
     public static long unfilledPenalty(long maxPositionCostSen) {
-        return Math.max(MIN_UNFILLED_PENALTY, 10L * maxPositionCostSen);
+        return unfilledPenalty(maxPositionCostSen, MIN_UNFILLED_PENALTY);
+    }
+
+    /**
+     * Same safety rule with a configured price (sen): the configured price is used unless
+     * it is lower than ten times the dearest position, so a wrongly small setting can never
+     * make the solver prefer an empty shift to a staffed one.
+     */
+    public static long unfilledPenalty(long maxPositionCostSen, long configuredSen) {
+        return Math.max(configuredSen, 10L * maxPositionCostSen);
     }
 }
