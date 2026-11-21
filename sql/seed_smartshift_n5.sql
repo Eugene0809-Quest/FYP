@@ -77,18 +77,20 @@ SET @sched = LAST_INSERT_ID();
 INSERT INTO objective_weight (schedule_id) VALUES (@sched);
 
 -- A starter set of constraint rules (hard rules are non-negotiable in the
--- solver regardless of this table; this row set exists so
--- constraint_violation.rule_id has real rows to reference)
+-- solver regardless of this table; the SOFT rows hold the objective weights in
+-- ringgit that the solver reads (see SolverWeights.java), and all rows give
+-- constraint_violation.rule_id real rows to reference)
 INSERT INTO constraint_rule (rule_code, rule_name, rule_type, weight) VALUES
 ('AVAILABILITY',  'Employee must be available for the shift', 'HARD', 1.00),
 ('COVERAGE',      'Shift staffing requirement must be met',   'HARD', 1.00),
 ('NO_OVERLAP',    'No employee double-booked on the same day','HARD', 1.00),
 ('MAX_HOURS',     'Weekly hour cap (Employment Act 1955)',    'HARD', 1.00),
 ('ROLE_MATCH',    'Employee role must match shift role',      'HARD', 1.00),
-('OVERTIME',      'Minimise overtime hours',                  'SOFT', 1.00),
-('WORKLOAD',      'Minimise workload imbalance across staff', 'SOFT', 1.00),
-('PREFERENCE',    'Respect employee shift preferences',       'SOFT', 1.00),
-('UNFILLED',      'Minimise unfilled shift demand',           'SOFT', 100.00);
+('OVERTIME',      'Overtime penalty (RM per overtime hour)',                        'SOFT', 100.00),
+('WORKLOAD',      'Workload imbalance within a role (RM per hour of difference)',   'SOFT', 5.00),
+('PREFERENCE',    'Value of one shift preference level (RM per level)',             'SOFT', 2.00),
+('UNFILLED',      'Price of one unfilled position (RM)',                            'SOFT', 10000.00),
+('LABOUR_COST',   'Importance of the wage bill (1.00 = real pay, 0 = ignore pay)',  'SOFT', 1.00);
 
 -- Default login for the FYP1 demo: username 'admin', password 'admin123'.
 -- Change this before any real/public use - it's a known demo credential.

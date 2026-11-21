@@ -5,7 +5,9 @@ import com.questiu.scheduler.dao.EmployeeDao;
 import com.questiu.scheduler.dao.PreferenceDao;
 import com.questiu.scheduler.dao.PayrollRecordDao;
 import com.questiu.scheduler.dao.PublicHolidayDao;
+import com.questiu.scheduler.dao.ObjectiveWeightDao;
 import com.questiu.scheduler.dao.ScheduleAssignmentDao;
+import com.questiu.scheduler.dao.SolverWeightsDao;
 import com.questiu.scheduler.dao.ScheduleDao;
 import com.questiu.scheduler.dao.RoleDao;
 import com.questiu.scheduler.dao.ShiftDao;
@@ -14,6 +16,7 @@ import com.questiu.scheduler.payroll.PayrollCalculator;
 import com.questiu.scheduler.solver.ManualScheduleValidator;
 import com.questiu.scheduler.solver.PreferenceScorer;
 import com.questiu.scheduler.solver.SchedulingEngine;
+import com.questiu.scheduler.solver.SolverWeights;
 import javafx.application.Application;
 import javafx.beans.binding.Bindings;
 import javafx.collections.FXCollections;
@@ -78,6 +81,7 @@ public class MainApp extends Application {
     private LocalDate lastWeekStart;
     private String lastScheduleStatus; // 'GENERATED' (Automatic) or 'DRAFT' (Manual)
     private Double lastObjectiveValue; // solver objective in RM-equivalent (Automatic); null for Manual
+    private SolverWeights lastWeights; // the objective weights used by the last Automatic run; null for Manual
 
     // --- Employees tab ---
     private final TableView<EmployeeRow> employeeTable = new TableView<>();
@@ -460,8 +464,12 @@ public class MainApp extends Application {
                 System.out.println("[UI] Calling SchedulingEngine.solve()...");
                 List<Preference> preferences = new PreferenceDao().findAll();
                 System.out.println("[UI] Loaded " + preferences.size() + " shift preferences");
+                SolverWeightsDao.Loaded loadedWeights = new SolverWeightsDao().load();
+                System.out.println("[UI] Solver weights: " + loadedWeights.weights
+                        + (loadedWeights.note == null ? "" : " - " + loadedWeights.note));
                 SchedulingEngine.SolveResult result = new SchedulingEngine()
-                        .solve(employees, shifts, usableAvailability, preferences, weekStart, publicHolidays, 10.0);
+                        .solve(employees, shifts, usableAvailability, preferences, weekStart, publicHolidays,
+                                loadedWeights.weights, 10.0);
                 System.out.println("[UI] Solve returned. Status: " + result.status);
 
                 if (!result.isFeasible()) {
@@ -502,7 +510,8 @@ public class MainApp extends Application {
                 javafx.application.Platform.runLater(() -> {
                     payrollTable.setItems(rows);
                     statusLabel.setText("Roster generated for the week starting " + weekStart.format(DMY)
-                            + ". Check it below, then click Save to Database.");
+                            + ". Check it below, then click Save to Database."
+                            + (loadedWeights.note == null ? "" : " Note: " + loadedWeights.note));
                     showAutoSummary(result.status.toString(), result.solveTimeMillis, result.totalUnfilled,
                             prefScore, weekStart, holidaysThisWeek, leaveDayCount, totalNet, totalEmployerCost);
                     lastAssignments = result.assignments;
@@ -511,6 +520,7 @@ public class MainApp extends Application {
                     lastWeekStart = weekStart;
                     lastScheduleStatus = "GENERATED";
                     lastObjectiveValue = result.objectiveValueRm();
+                    lastWeights = loadedWeights.weights;
                     saveButton.setDisable(false);
                 });
                 System.out.println("[UI] Done.");
@@ -605,6 +615,7 @@ public class MainApp extends Application {
         lastWeekStart = weekStart;
         lastScheduleStatus = "DRAFT";
         lastObjectiveValue = null; // a hand-built roster has no solver objective
+        lastWeights = null;        // ... and no objective weights
         saveButton.setDisable(false);
     }
 
@@ -627,6 +638,7 @@ public class MainApp extends Application {
         final LocalDate weekStartToSave = lastWeekStart;
         final String statusToSave = lastScheduleStatus;
         final Double objectiveToSave = lastObjectiveValue;
+        final SolverWeights weightsToSave = lastWeights;
         final Integer userId = currentUser != null ? currentUser.getUserId() : null;
 
         saveButton.setDisable(true);
@@ -637,10 +649,22 @@ public class MainApp extends Application {
                 int scheduleId = new ScheduleDao().create(weekStartToSave, statusToSave, objectiveToSave, userId);
                 new ScheduleAssignmentDao().saveAll(scheduleId, assignmentsToSave, shiftsByIdToSave);
                 new PayrollRecordDao().saveAll(scheduleId, payrollToSave);
+                // Which weights produced this roster. Not essential, so a failure here must not hide
+                // that the roster itself was saved.
+                String weightsNote = "";
+                if (weightsToSave != null) {
+                    try {
+                        new ObjectiveWeightDao().save(scheduleId, weightsToSave);
+                    } catch (Exception wex) {
+                        weightsNote = " (The solver weights used could not be recorded: " + wex.getMessage() + ")";
+                    }
+                }
+                final String weightsNoteFinal = weightsNote;
                 javafx.application.Platform.runLater(() -> {
                     statusLabel.setText(String.format(
                             "Saved as schedule #%d (%s, week starting %s): %d assignment(s), %d payroll record(s).",
-                            scheduleId, statusToSave, weekStartToSave, assignmentsToSave.size(), payrollToSave.size()));
+                            scheduleId, statusToSave, weekStartToSave, assignmentsToSave.size(), payrollToSave.size())
+                            + weightsNoteFinal);
                     saveButton.setDisable(false);
                 });
             } catch (Exception ex) {

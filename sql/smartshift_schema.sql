@@ -4,10 +4,10 @@
 --
 -- CONSOLIDATED SCHEMA (20 tables). For a NEW database this single
 -- file is enough: it already includes what migrations 002, 004, 005,
--- 007, 008 and 009 added (employee registration fields, public_holiday
+-- 007, 008, 009 and 010 added (employee registration fields, public_holiday
 -- table, extended payroll_record, company profile, employee statutory
 -- numbers, staff login link, leave requests, job positions, who
--- published a roster and when). Seed data
+-- published a roster and when, solver weights in ringgit). Seed data
 -- lives in seed_smartshift_n5.sql.
 -- The files in sql/migrations/ are kept only as history for databases
 -- that were built before this consolidation.
@@ -155,7 +155,7 @@ CREATE TABLE constraint_rule (
     rule_code       VARCHAR(50) NOT NULL UNIQUE,
     rule_name       VARCHAR(100) NOT NULL,
     rule_type       ENUM('HARD','SOFT') NOT NULL,
-    weight          DECIMAL(6,2) NOT NULL DEFAULT 1.00,
+    weight          DECIMAL(10,2) NOT NULL DEFAULT 1.00,
     is_enabled      BOOLEAN NOT NULL DEFAULT TRUE
 ) ENGINE=InnoDB;
 
@@ -261,15 +261,17 @@ CREATE TABLE payroll_record (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 12. OBJECTIVE_WEIGHT - configurable lambda weights for the weighted
---     objective Z (Section 3.4.4), one row per schedule run.
+-- 12. OBJECTIVE_WEIGHT - the objective weights (RM, see constraint_rule and
+--     SolverWeights.java) that were USED to generate a saved roster, one row
+--     per schedule run (migration 010).
 -- ------------------------------------------------------------
 CREATE TABLE objective_weight (
     schedule_id       INT PRIMARY KEY,
-    lambda_overtime   DECIMAL(6,2) NOT NULL DEFAULT 1.00,
-    lambda_workload   DECIMAL(6,2) NOT NULL DEFAULT 1.00,
-    lambda_preference DECIMAL(6,2) NOT NULL DEFAULT 1.00,
-    lambda_unfilled   DECIMAL(6,2) NOT NULL DEFAULT 100.00,
+    lambda_overtime   DECIMAL(10,2) NOT NULL DEFAULT 100.00,
+    lambda_workload   DECIMAL(10,2) NOT NULL DEFAULT 5.00,
+    lambda_preference DECIMAL(10,2) NOT NULL DEFAULT 2.00,
+    lambda_unfilled   DECIMAL(10,2) NOT NULL DEFAULT 10000.00,
+    lambda_cost       DECIMAL(10,2) NOT NULL DEFAULT 1.00,
     CONSTRAINT fk_objective_schedule
         FOREIGN KEY (schedule_id) REFERENCES schedule(schedule_id)
         ON UPDATE CASCADE ON DELETE CASCADE
