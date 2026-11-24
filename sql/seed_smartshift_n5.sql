@@ -90,7 +90,8 @@ INSERT INTO constraint_rule (rule_code, rule_name, rule_type, weight) VALUES
 ('WORKLOAD',      'Workload imbalance within a role (RM per hour of difference)',   'SOFT', 5.00),
 ('PREFERENCE',    'Value of one shift preference level (RM per level)',             'SOFT', 2.00),
 ('UNFILLED',      'Price of one unfilled position (RM)',                            'SOFT', 10000.00),
-('LABOUR_COST',   'Importance of the wage bill (1.00 = real pay, 0 = ignore pay)',  'SOFT', 1.00);
+('LABOUR_COST',   'Importance of the wage bill (1.00 = real pay, 0 = ignore pay)',  'SOFT', 1.00),
+('LEAVE',         'No assignment on a day of approved leave',                       'HARD', 1.00);
 
 -- Default login for the FYP1 demo: username 'admin', password 'admin123'.
 -- Change this before any real/public use - it's a known demo credential.

@@ -5,6 +5,7 @@ import com.questiu.scheduler.dao.EmployeeDao;
 import com.questiu.scheduler.dao.PreferenceDao;
 import com.questiu.scheduler.dao.PayrollRecordDao;
 import com.questiu.scheduler.dao.PublicHolidayDao;
+import com.questiu.scheduler.dao.ComplianceDao;
 import com.questiu.scheduler.dao.ObjectiveWeightDao;
 import com.questiu.scheduler.dao.ScheduleAssignmentDao;
 import com.questiu.scheduler.dao.SolverWeightsDao;
@@ -83,6 +84,8 @@ public class MainApp extends Application {
     private String lastScheduleStatus; // 'GENERATED' (Automatic) or 'DRAFT' (Manual)
     private Double lastObjectiveValue; // solver objective in RM-equivalent (Automatic); null for Manual
     private SolverWeights lastWeights; // the objective weights used by the last Automatic run; null for Manual
+    private ComplianceChecker.Report lastCompliance; // audit of the last roster; null if it could not be computed
+    private double lastSoftPenalty;                    // its preference violation score
 
     // --- Employees tab ---
     private final TableView<EmployeeRow> employeeTable = new TableView<>();
@@ -543,6 +546,8 @@ public class MainApp extends Application {
                     lastScheduleStatus = "GENERATED";
                     lastObjectiveValue = result.objectiveValueRm();
                     lastWeights = loadedWeights.weights;
+                    lastCompliance = compliance;
+                    lastSoftPenalty = prefScore.violationScore;
                     saveButton.setDisable(false);
                 });
                 System.out.println("[UI] Done.");
@@ -646,6 +651,8 @@ public class MainApp extends Application {
         lastScheduleStatus = "DRAFT";
         lastObjectiveValue = null; // a hand-built roster has no solver objective
         lastWeights = null;        // ... and no objective weights
+        lastCompliance = compliance;
+        lastSoftPenalty = prefScore.violationScore;
         saveButton.setDisable(false);
     }
 
@@ -669,6 +676,8 @@ public class MainApp extends Application {
         final String statusToSave = lastScheduleStatus;
         final Double objectiveToSave = lastObjectiveValue;
         final SolverWeights weightsToSave = lastWeights;
+        final ComplianceChecker.Report complianceToSave = lastCompliance;
+        final double softPenaltyToSave = lastSoftPenalty;
         final Integer userId = currentUser != null ? currentUser.getUserId() : null;
 
         saveButton.setDisable(true);
@@ -690,11 +699,23 @@ public class MainApp extends Application {
                     }
                 }
                 final String weightsNoteFinal = weightsNote;
+                // The compliance audit of this roster. Also not essential: a failure must not hide the save.
+                String complianceNote = "";
+                if (complianceToSave != null) {
+                    try {
+                        int detailRows = new ComplianceDao().save(scheduleId, complianceToSave, softPenaltyToSave);
+                        complianceNote = String.format(" Compliance report saved (%d hard-rule violation(s), %d detail row(s)).",
+                                complianceToSave.hardViolations, detailRows);
+                    } catch (Exception cex) {
+                        complianceNote = " (The compliance report could not be recorded: " + cex.getMessage() + ")";
+                    }
+                }
+                final String complianceNoteFinal = complianceNote;
                 javafx.application.Platform.runLater(() -> {
                     statusLabel.setText(String.format(
                             "Saved as schedule #%d (%s, week starting %s): %d assignment(s), %d payroll record(s).",
                             scheduleId, statusToSave, weekStartToSave, assignmentsToSave.size(), payrollToSave.size())
-                            + weightsNoteFinal);
+                            + weightsNoteFinal + complianceNoteFinal);
                     saveButton.setDisable(false);
                 });
             } catch (Exception ex) {
