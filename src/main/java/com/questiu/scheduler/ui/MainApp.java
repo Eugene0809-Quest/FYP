@@ -13,6 +13,7 @@ import com.questiu.scheduler.dao.RoleDao;
 import com.questiu.scheduler.dao.ShiftDao;
 import com.questiu.scheduler.model.*;
 import com.questiu.scheduler.payroll.PayrollCalculator;
+import com.questiu.scheduler.solver.ComplianceChecker;
 import com.questiu.scheduler.solver.ManualScheduleValidator;
 import com.questiu.scheduler.solver.PreferenceScorer;
 import com.questiu.scheduler.solver.SchedulingEngine;
@@ -358,7 +359,8 @@ public class MainApp extends Application {
     private void showAutoSummary(String solverStatus, long solveMillis, int unfilled,
                                  PreferenceScorer.Result prefScore, LocalDate weekStart,
                                  long holidaysThisWeek, int leaveDayCount,
-                                 double totalNet, double totalEmployerCost) {
+                                 double totalNet, double totalEmployerCost,
+                                 ComplianceChecker.Report compliance) {
         Map<String, List<StatusSummaryPane.Item>> rows = new LinkedHashMap<>();
         rows.put("Solver", List.of(
                 solverStatus.equals("OPTIMAL")
@@ -366,6 +368,7 @@ public class MainApp extends Application {
                         : StatusSummaryPane.warn("Status", solverStatus),
                 StatusSummaryPane.item("Solve time", String.format("%,d ms", solveMillis)),
                 StatusSummaryPane.warnIf(unfilled > 0, "Unfilled slots", String.valueOf(unfilled))));
+        rows.put("Compliance", complianceItems(compliance));
         rows.put("Week", List.of(
                 StatusSummaryPane.item("Week starting", weekStart.format(DMY)),
                 StatusSummaryPane.item("Holidays this week", String.valueOf(holidaysThisWeek)),
@@ -380,7 +383,8 @@ public class MainApp extends Application {
     /** Result block for Manual mode: coverage and warnings first, then the same week/preferences/payroll rows. */
     private void showManualSummary(ManualScheduleValidator.ValidationResult validation,
                                    PreferenceScorer.Result prefScore, LocalDate weekStart,
-                                   long holidaysThisWeek, double totalNet, double totalEmployerCost) {
+                                   long holidaysThisWeek, double totalNet, double totalEmployerCost,
+                                   ComplianceChecker.Report compliance) {
         Map<String, List<StatusSummaryPane.Item>> rows = new LinkedHashMap<>();
         rows.put("Roster", List.of(
                 StatusSummaryPane.item("Mode", "Manual"),
@@ -389,6 +393,7 @@ public class MainApp extends Application {
                                 validation.totalSlots - validation.unfilledSlots, validation.totalSlots)),
                 StatusSummaryPane.warnIf(!validation.violations.isEmpty(), "Warnings",
                         String.valueOf(validation.violations.size()))));
+        if (compliance != null) rows.put("Compliance", complianceItems(compliance));
         rows.put("Week", List.of(
                 StatusSummaryPane.item("Week starting", weekStart.format(DMY)),
                 StatusSummaryPane.item("Holidays this week", String.valueOf(holidaysThisWeek))));
@@ -397,6 +402,17 @@ public class MainApp extends Application {
                 StatusSummaryPane.item("Net payroll", money(totalNet)),
                 StatusSummaryPane.item("Employer cost", money(totalEmployerCost))));
         summaryPane.showRows(rows);
+    }
+
+    /** Hard-rule violations (should be 0) and coverage from the independent roster audit. */
+    private static List<StatusSummaryPane.Item> complianceItems(ComplianceChecker.Report compliance) {
+        return List.of(
+                StatusSummaryPane.warnIf(compliance.hardViolations > 0, "Hard-rule violations",
+                        String.valueOf(compliance.hardViolations)),
+                StatusSummaryPane.warnIf(compliance.unfilledPositions > 0, "Coverage",
+                        String.format("%.0f%% (%d of %d positions filled)", compliance.coveragePercent(),
+                                compliance.totalPositions - compliance.unfilledPositions,
+                                compliance.totalPositions)));
     }
 
     private static List<StatusSummaryPane.Item> preferenceItems(PreferenceScorer.Result prefScore) {
@@ -507,6 +523,11 @@ public class MainApp extends Application {
                 double totalNet = payroll.stream().mapToDouble(p -> p.getStatutory().getNetPay().doubleValue()).sum();
                 double totalEmployerCost = payroll.stream().mapToDouble(p -> p.getStatutory().getEmployerTotalCost().doubleValue()).sum();
                 PreferenceScorer.Result prefScore = PreferenceScorer.score(result.assignments, preferences);
+                // Independent audit of the solver's roster against the hard rules (must find none).
+                ComplianceChecker.Report compliance = ComplianceChecker.check(
+                        employees, shifts, availability, result.assignments, leaveDays, weekStart);
+                System.out.println("[UI] Compliance audit: " + compliance.hardViolations + " hard violation(s), "
+                        + compliance.unfilledPositions + " unfilled position(s)");
 
                 javafx.application.Platform.runLater(() -> {
                     payrollTable.setItems(rows);
@@ -514,7 +535,7 @@ public class MainApp extends Application {
                             + ". Check it below, then click Save to Database."
                             + (loadedWeights.note == null ? "" : " Note: " + loadedWeights.note));
                     showAutoSummary(result.status.toString(), result.solveTimeMillis, result.totalUnfilled,
-                            prefScore, weekStart, holidaysThisWeek, leaveDayCount, totalNet, totalEmployerCost);
+                            prefScore, weekStart, holidaysThisWeek, leaveDayCount, totalNet, totalEmployerCost, compliance);
                     lastAssignments = result.assignments;
                     lastPayroll = payroll;
                     lastShiftsById = shiftsById;
@@ -570,6 +591,14 @@ public class MainApp extends Application {
         ManualScheduleValidator.ValidationResult validation =
                 new ManualScheduleValidator().validate(cachedEmployees, cachedShifts, assignments, leaveDays, weekStart);
 
+        ComplianceChecker.Report compliance;
+        try {
+            compliance = ComplianceChecker.check(cachedEmployees, cachedShifts, new AvailabilityDao().findAll(),
+                    assignments, leaveDays, weekStart);
+        } catch (Exception ex) {
+            compliance = null; // without the availability data the audit would report false problems
+        }
+
         manualPane.setWarningText(validation.isClean()
                 ? ""
                 : "Compliance warnings (NO_OVERLAP / MAX_HOURS / LEAVE):\n" + String.join("\n", validation.violations));
@@ -608,7 +637,7 @@ public class MainApp extends Application {
         }
         statusLabel.setText("Manual roster calculated for the week starting " + weekStart.format(DMY)
                 + ". Check it below, then click Save to Database.");
-        showManualSummary(validation, prefScore, weekStart, holidaysThisWeek, totalNet, totalEmployerCost);
+        showManualSummary(validation, prefScore, weekStart, holidaysThisWeek, totalNet, totalEmployerCost, compliance);
 
         lastAssignments = assignments;
         lastPayroll = payroll;

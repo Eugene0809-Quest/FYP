@@ -6,6 +6,7 @@ import com.questiu.scheduler.model.EmploymentType;
 import com.questiu.scheduler.model.Preference;
 import com.questiu.scheduler.model.RosterAssignment;
 import com.questiu.scheduler.model.Shift;
+import com.questiu.scheduler.solver.ComplianceChecker;
 import com.questiu.scheduler.solver.SchedulingEngine;
 import com.questiu.scheduler.solver.SolverWeights;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -162,5 +164,28 @@ class SchedulingEngineCostTest {
         assertEquals(2, r.assignments.stream().filter(a -> a.getEmployeeId() == 2).count());
         assertEquals(2, r.assignments.stream().filter(a -> a.getEmployeeId() == 3).count());
         assertEquals(0, r.assignments.stream().filter(a -> a.getEmployeeId() == 4).count());
+    }
+
+    @Test
+    void theSolversRosterPassesTheIndependentComplianceAudit() {
+        // Scenario A: everyone's availability, one person with none, six shifts.
+        List<Employee> staff = List.of(emp(1, "10.00", "45.00"), emp(2, "10.00", "45.00"),
+                emp(3, "15.00", "45.00"), emp(4, "10.00", "45.00"));
+        List<Shift> shifts = List.of(lunch(1, 1), lunch(2, 2), lunch(3, 3), lunch(4, 4), lunch(5, 5), lunch(6, 6));
+        List<Availability> availability = alwaysAvailable(1, 2, 3);
+        SchedulingEngine.SolveResult r = new SchedulingEngine().solve(staff, shifts, availability, 10.0);
+        ComplianceChecker.Report audit = ComplianceChecker.check(staff, shifts, availability, r.assignments, Map.of(), null);
+        assertEquals(0, audit.hardViolations, "the solver must never break a hard rule");
+        assertEquals(0, audit.unfilledPositions);
+
+        // Scenario B: two people who can each work only one 4-hour shift, three shifts: one stays empty.
+        List<Employee> tight = List.of(emp(1, "10.00", "4.00"), emp(2, "12.00", "4.00"));
+        List<Shift> three = List.of(lunch(1, 1), lunch(2, 2), lunch(3, 3));
+        List<Availability> tightAvailability = alwaysAvailable(1, 2);
+        SchedulingEngine.SolveResult t = new SchedulingEngine().solve(tight, three, tightAvailability, 10.0);
+        ComplianceChecker.Report tightAudit = ComplianceChecker.check(tight, three, tightAvailability, t.assignments, Map.of(), null);
+        assertEquals(0, tightAudit.hardViolations, "hours caps respected");
+        assertEquals(t.totalUnfilled, tightAudit.unfilledPositions, "audit and solver agree on the shortfall");
+        assertEquals(1, tightAudit.unfilledPositions);
     }
 }
