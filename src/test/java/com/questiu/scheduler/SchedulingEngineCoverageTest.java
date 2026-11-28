@@ -42,14 +42,19 @@ class SchedulingEngineCoverageTest {
         return list;
     }
 
-    /** n four-hour shifts, one person each: lunches Mon-Sun first, then dinners Mon onwards. */
+    /**
+     * n four-hour shifts, one person each: lunches Mon-Sat first, then dinners Mon onwards.
+     * Only Monday to Saturday are used: since the weekly rest-day rule (hard constraint 6) one
+     * person can work at most 6 different days, so these tests keep every shift inside a 6-day
+     * week and still test what they are about (the hours cap and the overtime threshold).
+     */
     private static List<Shift> fourHourShifts(int n) {
         List<Shift> shifts = new ArrayList<>();
         int id = 1;
-        for (int day = 1; day <= 7 && shifts.size() < n; day++) {
+        for (int day = 1; day <= 6 && shifts.size() < n; day++) {
             shifts.add(new Shift(id++, day, LUNCH_START, LUNCH_END, 1, 1));
         }
-        for (int day = 1; day <= 7 && shifts.size() < n; day++) {
+        for (int day = 1; day <= 6 && shifts.size() < n; day++) {
             shifts.add(new Shift(id++, day, DINNER_START, DINNER_END, 1, 1));
         }
         return shifts;

@@ -186,4 +186,28 @@ class ComplianceCheckerTest {
         assertEquals(theirs.unfilledSlots, mine.unfilledPositions);
         assertEquals(theirs.coveragePercent(), mine.coveragePercent(), 1e-9);
     }
+
+    @Test
+    void workingAllSevenDaysBreaksTheRestDayRuleButSixDaysIsFine() {
+        List<Shift> week = new ArrayList<>();
+        List<RosterAssignment> sevenDays = new ArrayList<>();
+        for (int day = 1; day <= 7; day++) {
+            week.add(shift(day, day, 11, 15, 1, 1));
+            sevenDays.add(a(1, day));
+        }
+        ComplianceChecker.Report seven = ComplianceChecker.check(
+                List.of(emp(1, 1, "45")), week, always(1), sevenDays, Map.of(), MONDAY);
+        assertEquals(1, count(seven, Rule.REST_DAY));
+        assertEquals(1, seven.hardViolations);
+        assertEquals(1.0, seven.violations.get(0).severity, 1e-9);
+
+        ComplianceChecker.Report six = ComplianceChecker.check(
+                List.of(emp(1, 1, "45")), week, always(1), sevenDays.subList(0, 6), Map.of(), MONDAY);
+        assertEquals(0, count(six, Rule.REST_DAY));
+        // two shifts on the same day count as one working day
+        List<Shift> doubleDay = List.of(shift(1, 1, 8, 11, 1, 1), shift(2, 1, 12, 15, 1, 1));
+        ComplianceChecker.Report oneDay = ComplianceChecker.check(
+                List.of(emp(1, 1, "45")), doubleDay, always(1), List.of(a(1, 1), a(1, 2)), Map.of(), MONDAY);
+        assertEquals(0, count(oneDay, Rule.REST_DAY));
+    }
 }

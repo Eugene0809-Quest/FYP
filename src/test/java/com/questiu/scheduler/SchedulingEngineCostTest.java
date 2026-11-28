@@ -188,4 +188,33 @@ class SchedulingEngineCostTest {
         assertEquals(t.totalUnfilled, tightAudit.unfilledPositions, "audit and solver agree on the shortfall");
         assertEquals(1, tightAudit.unfilledPositions);
     }
+
+    @Test
+    void everyoneGetsAtLeastOneRestDayPerWeek() {
+        // Employee 1 costs RM10/h, employee 2 RM30/h, both free all seven days, one 4-hour shift each day.
+        // Cost and fairness alone would give all seven days to the RM10 employee (7 shifts for 1, none for 2).
+        // With the rest-day rule she works at most 6 days and the RM30 employee covers the seventh.
+        List<Employee> staff = List.of(emp(1, "10.00", "45.00"), emp(2, "30.00", "45.00"));
+        List<Shift> week = List.of(lunch(1, 1), lunch(2, 2), lunch(3, 3), lunch(4, 4), lunch(5, 5), lunch(6, 6), lunch(7, 7));
+        List<Availability> availability = alwaysAvailable(1, 2);
+        SchedulingEngine.SolveResult r = new SchedulingEngine().solve(staff, week, availability, 10.0);
+        assertTrue(r.isFeasible());
+        assertEquals(0, r.totalUnfilled);
+        assertEquals(6, r.assignments.stream().filter(a -> a.getEmployeeId() == 1).count());
+        assertEquals(1, r.assignments.stream().filter(a -> a.getEmployeeId() == 2).count());
+        ComplianceChecker.Report audit = ComplianceChecker.check(staff, week, availability, r.assignments, Map.of(), null);
+        assertEquals(0, audit.hardViolations, "the independent audit finds no rest-day violation either");
+    }
+
+    @Test
+    void aSevenDayShortageIsLeftUnfilledRatherThanBreakingTheRestDay() {
+        // A single employee, seven daily shifts: the law wins, one shift stays empty.
+        List<Employee> staff = List.of(emp(1, "10.00", "45.00"));
+        List<Shift> week = List.of(lunch(1, 1), lunch(2, 2), lunch(3, 3), lunch(4, 4), lunch(5, 5), lunch(6, 6), lunch(7, 7));
+        List<Availability> availability = alwaysAvailable(1);
+        SchedulingEngine.SolveResult r = new SchedulingEngine().solve(staff, week, availability, 10.0);
+        assertTrue(r.isFeasible());
+        assertEquals(1, r.totalUnfilled);
+        assertEquals(6, r.assignments.size());
+    }
 }

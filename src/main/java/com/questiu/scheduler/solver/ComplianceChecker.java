@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
  *  - LEAVE         assigned on a day of approved leave (hard); reported instead of
  *                  AVAILABILITY for that assignment so it is not counted twice
  *  - COVERAGE      more people on a shift than it needs (hard)
+ *  - REST_DAY      rostered on all seven days, so no weekly rest day (hard)
  *  - UNFILLED      fewer people on a shift than it needs (soft: the roster is still usable,
  *                  the shortfall is reported)
  */
@@ -39,7 +40,7 @@ public final class ComplianceChecker {
 
     public enum Rule {
         AVAILABILITY(true), ROLE_MATCH(true), NO_OVERLAP(true), MAX_HOURS(true),
-        LEAVE(true), COVERAGE(true), UNFILLED(false);
+        LEAVE(true), COVERAGE(true), REST_DAY(true), UNFILLED(false);
 
         private final boolean hard;
 
@@ -149,6 +150,13 @@ public final class ComplianceChecker {
                                         + " overlaps " + describe(mine.get(j), weekStart) + "."));
                     }
                 }
+            }
+            long daysWorked = mine.stream().map(Shift::getDayOfWeek).distinct().count();
+            if (daysWorked > WorkingDayRule.MAX_WORKING_DAYS_PER_WEEK) {
+                found.add(new Violation(Rule.REST_DAY, e.getEmployeeId(), null,
+                        daysWorked - WorkingDayRule.MAX_WORKING_DAYS_PER_WEEK,
+                        e.getFullName() + " is rostered on " + daysWorked
+                                + " different days; at least one rest day a week is required."));
             }
             double hours = mine.stream().mapToDouble(Shift::durationHours).sum();
             double cap = e.getMaxWeeklyHours().doubleValue();

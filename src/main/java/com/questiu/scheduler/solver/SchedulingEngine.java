@@ -43,6 +43,8 @@ import java.util.stream.Collectors;
  *   only: employer EPF/SOCSO/EIS are not proportional to gross, so this is close to,
  *   not exactly, the employer's total cost. Callers that do not pass the week start
  *   and holiday dates (the 4- and 5-argument overloads) get no holiday doubling.
+ * - Hard constraint 6 gives everyone at least one rest day a week: nobody is rostered on
+ *   more than WorkingDayRule.MAX_WORKING_DAYS_PER_WEEK (6) different days.
  * - Workload balance compares only staff who can work at least one shift this week; someone
  *   with no availability (or on leave all week) is not counted as "0 hours".
  * - The objective weights come from SolverWeights (defaults equal the old constants).
@@ -152,6 +154,7 @@ public class SchedulingEngine {
         // Also notes who can work at least one shift this week: only those people take part in
         // the workload-balance comparison below (see "schedulableIds").
         final Set<Integer> schedulableIds = new HashSet<>();
+        final Set<String> eligiblePairs = new HashSet<>(); // "employee_shift" pairs that C1 and C2 allow
         for (Employee e : employees) {
             List<Availability> empAvail = availByEmployee.getOrDefault(e.getEmployeeId(), List.of());
             for (Shift s : shifts) {
@@ -161,6 +164,7 @@ public class SchedulingEngine {
                     model.addEquality(x.get(key(e.getEmployeeId(), s.getShiftId())), 0);
                 } else {
                     schedulableIds.add(e.getEmployeeId());
+                    eligiblePairs.add(key(e.getEmployeeId(), s.getShiftId()));
                 }
             }
         }
@@ -209,6 +213,33 @@ public class SchedulingEngine {
             }
             long maxHoursScaled = Math.round(e.getMaxWeeklyHours().doubleValue() * 100);
             model.addLessOrEqual(hoursExpr, maxHoursScaled);
+        }
+
+        // ---- Hard constraint 6: at least one rest day per week (Employment Act 1955, s. 59) ----
+        // worksThatDay[e,d] = 1 whenever e works any shift on day d; e may work on at most
+        // MAX_WORKING_DAYS_PER_WEEK different days. Only people who could work on more days than
+        // that need the constraint (for everyone else it can never bind), which keeps the model small.
+        for (Employee e : employees) {
+            Map<Integer, List<Shift>> eligibleByDay = new TreeMap<>();
+            for (Shift s : shifts) {
+                if (eligiblePairs.contains(key(e.getEmployeeId(), s.getShiftId()))) {
+                    eligibleByDay.computeIfAbsent(s.getDayOfWeek(), dayKey -> new ArrayList<>()).add(s);
+                }
+            }
+            if (eligibleByDay.size() <= WorkingDayRule.MAX_WORKING_DAYS_PER_WEEK) continue;
+            LinearExprBuilder daysWorked = LinearExpr.newBuilder();
+            for (Map.Entry<Integer, List<Shift>> day : eligibleByDay.entrySet()) {
+                com.google.ortools.sat.BoolVar worksThatDay =
+                        model.newBoolVar("works_e" + e.getEmployeeId() + "_d" + day.getKey());
+                for (Shift s : day.getValue()) {
+                    LinearExprBuilder link = LinearExpr.newBuilder();
+                    link.addTerm(x.get(key(e.getEmployeeId(), s.getShiftId())), 1);
+                    link.addTerm(worksThatDay, -1);
+                    model.addLessOrEqual(link, 0); // x[e,s] <= worksThatDay[e,d]
+                }
+                daysWorked.addTerm(worksThatDay, 1);
+            }
+            model.addLessOrEqual(daysWorked, WorkingDayRule.MAX_WORKING_DAYS_PER_WEEK);
         }
 
         // ---- Objective Z: Weighted Multi-Objective (Section 3.4.4) ----
